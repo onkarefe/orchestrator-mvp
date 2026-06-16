@@ -10,6 +10,8 @@ npm start
 npm run worker
 ```
 
+Run `npm run migrate` to create the MySQL database and tables from `src/db/schema.sql`.
+
 ## Routes
 
 - `GET /health`
