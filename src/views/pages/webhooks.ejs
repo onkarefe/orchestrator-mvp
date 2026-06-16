@@ -1,0 +1,39 @@
+<section class="dashboard">
+  <p class="eyebrow">Admin</p>
+  <h1><%= title %></h1>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Provider</th>
+        <th>Topic</th>
+        <th>Shopify Order ID</th>
+        <th>Status</th>
+        <th>HMAC Valid</th>
+        <th>Received At</th>
+        <th>Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if (webhooks.length === 0) { %>
+        <tr>
+          <td colspan="8">No webhooks recorded yet.</td>
+        </tr>
+      <% } %>
+
+      <% webhooks.forEach((webhook) => { %>
+        <tr>
+          <td><%= webhook.id %></td>
+          <td><%= webhook.provider %></td>
+          <td><%= webhook.topic || '' %></td>
+          <td><%= webhook.shopify_order_id || '' %></td>
+          <td><%= webhook.status %></td>
+          <td><%= webhook.hmac_valid === null ? '' : webhook.hmac_valid %></td>
+          <td><%= webhook.received_at %></td>
+          <td><a href="/admin/webhooks/<%= webhook.id %>">View</a></td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+</section>

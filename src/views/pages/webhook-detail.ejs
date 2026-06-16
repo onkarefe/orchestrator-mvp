@@ -1,0 +1,29 @@
+<section class="dashboard">
+  <p class="eyebrow">Admin</p>
+  <h1><%= title %></h1>
+
+  <dl>
+    <dt>ID</dt>
+    <dd><%= webhook.id %></dd>
+    <dt>Provider</dt>
+    <dd><%= webhook.provider %></dd>
+    <dt>Topic</dt>
+    <dd><%= webhook.topic || '' %></dd>
+    <dt>Shopify Order ID</dt>
+    <dd><%= webhook.shopify_order_id || '' %></dd>
+    <dt>Status</dt>
+    <dd><%= webhook.status %></dd>
+    <dt>HMAC Valid</dt>
+    <dd><%= webhook.hmac_valid === null ? '' : webhook.hmac_valid %></dd>
+    <dt>Received At</dt>
+    <dd><%= webhook.received_at %></dd>
+    <dt>Processed At</dt>
+    <dd><%= webhook.processed_at || '' %></dd>
+  </dl>
+
+  <h2>Headers</h2>
+  <pre><%= headersJson %></pre>
+
+  <h2>Raw Payload</h2>
+  <pre><%= rawPayloadJson %></pre>
+</section>
