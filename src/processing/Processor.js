@@ -5,10 +5,10 @@ import { artifactsDir, tmpDir } from '../config/paths.js';
 import { calculateSafeCrop, getImageMetadata } from './image.js';
 import { resolveMasterPath } from './masterResolver.js';
 import { buildPanelPixelWidths, computePanelsFromOutputMm } from './panels.js';
-import { createPanelPdfBuffer } from './pdf.js';
+import { createPanelPdfFile } from './pdf.js';
 import { isValidCropRatio } from './validation.js';
 import { buildOrderXml } from './xml.js';
-import { createZipFromEntries } from './zip.js';
+import { createZipFromFileEntries } from './zip.js';
 
 function parseJsonIfNeeded(value) {
   if (value === null || value === undefined || typeof value !== 'string') {
@@ -64,35 +64,46 @@ export async function processJobToZip({ order, job }) {
   const safeCrop = calculateSafeCrop(metadata, cropRatio);
   const panelPixelWidths = buildPanelPixelWidths(safeCrop.width, panelInfo.panelCount);
   const panelFiles = [];
-  const entries = [];
+  const fileEntries = [];
   const pageWidthMm = widthMm / panelInfo.panelCount;
+  const tempJobDir = path.join(tmpDir, `job-${job.id}`);
+  const artifactDir = path.join(artifactsDir, `job-${job.id}`);
+  const zipFileName = `job-${job.id}.zip`;
+  const zipPath = path.join(artifactDir, zipFileName);
   let panelLeft = safeCrop.left;
+
+  await fs.mkdir(tempJobDir, { recursive: true });
 
   for (let index = 0; index < panelPixelWidths.length; index += 1) {
     const panelFileName = `panel-${index + 1}.pdf`;
+    const tempPanelPath = path.join(tempJobDir, panelFileName);
     const panelCrop = {
       left: panelLeft,
       top: safeCrop.top,
       width: panelPixelWidths[index],
       height: safeCrop.height,
     };
-    const panelBuffer = await createPanelPdfBuffer({
+
+    await createPanelPdfFile({
       masterPath,
       crop: panelCrop,
       pageWidthMm,
       pageHeightMm: heightMm,
+      outputPath: tempPanelPath,
     });
 
     panelFiles.push(panelFileName);
-    entries.push({
+    fileEntries.push({
       name: panelFileName,
-      buffer: panelBuffer,
+      filePath: tempPanelPath,
     });
 
     panelLeft += panelPixelWidths[index];
   }
 
-  const xmlBuffer = Buffer.from(
+  const xmlTempPath = path.join(tempJobDir, 'order.xml');
+  await fs.writeFile(
+    xmlTempPath,
     buildOrderXml({
       order,
       job: {
@@ -105,18 +116,14 @@ export async function processJobToZip({ order, job }) {
     }),
     'utf8'
   );
-  const artifactDir = path.join(artifactsDir, `job-${job.id}`);
-  const zipFileName = `job-${job.id}.zip`;
-  const zipPath = path.join(artifactDir, zipFileName);
 
-  entries.unshift({
+  fileEntries.unshift({
     name: 'order.xml',
-    buffer: xmlBuffer,
+    filePath: xmlTempPath,
   });
 
-  await fs.mkdir(tmpDir, { recursive: true });
-  await fs.mkdir(artifactDir, { recursive: true });
-  await createZipFromEntries(zipPath, entries);
+  await createZipFromFileEntries(zipPath, fileEntries);
+  await fs.rm(tempJobDir, { recursive: true, force: true });
 
   return {
     zipPath,

@@ -1,3 +1,6 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
 import sharp from 'sharp';
 import { PDFDocument } from 'pdf-lib';
 
@@ -30,7 +33,28 @@ export async function createPanelPdfBuffer({ masterPath, crop, pageWidthMm, page
   return Buffer.from(await pdfDocument.save());
 }
 
+export async function createPanelPdfFile({
+  masterPath,
+  crop,
+  pageWidthMm,
+  pageHeightMm,
+  outputPath,
+}) {
+  const pdfBuffer = await createPanelPdfBuffer({
+    masterPath,
+    crop,
+    pageWidthMm,
+    pageHeightMm,
+  });
+
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await fs.writeFile(outputPath, pdfBuffer);
+
+  return outputPath;
+}
+
 export default {
   mmToPt,
   createPanelPdfBuffer,
+  createPanelPdfFile,
 };
