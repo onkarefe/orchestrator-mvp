@@ -72,12 +72,13 @@
         <th>File Name</th>
         <th>Status</th>
         <th>Download Count</th>
+        <th>Download</th>
       </tr>
     </thead>
     <tbody>
       <% if (artifacts.length === 0) { %>
         <tr>
-          <td colspan="5">No artifacts found.</td>
+          <td colspan="6">No artifacts found.</td>
         </tr>
       <% } %>
 
@@ -88,6 +89,11 @@
           <td><%= artifact.file_name %></td>
           <td><%= artifact.status %></td>
           <td><%= artifact.download_count %></td>
+          <td>
+            <% if (artifact.status === 'available') { %>
+              <a href="/admin/artifacts/<%= artifact.id %>/download">Download</a>
+            <% } %>
+          </td>
         </tr>
       <% }) %>
     </tbody>
