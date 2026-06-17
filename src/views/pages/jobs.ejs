@@ -1,0 +1,45 @@
+<section class="dashboard">
+  <p class="eyebrow">Admin</p>
+  <h1><%= title %></h1>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Order ID</th>
+        <th>Product</th>
+        <th>SKU</th>
+        <th>Master Asset</th>
+        <th>Width MM</th>
+        <th>Height MM</th>
+        <th>Status</th>
+        <th>Attempts</th>
+        <th>Created At</th>
+        <th>Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if (jobs.length === 0) { %>
+        <tr>
+          <td colspan="11">No jobs recorded yet.</td>
+        </tr>
+      <% } %>
+
+      <% jobs.forEach((job) => { %>
+        <tr>
+          <td><%= job.id %></td>
+          <td><%= job.order_id || '' %></td>
+          <td><%= job.product_title || '' %></td>
+          <td><%= job.sku || '' %></td>
+          <td><%= job.master_asset_id || '' %></td>
+          <td><%= job.width_mm || '' %></td>
+          <td><%= job.height_mm || '' %></td>
+          <td><%= job.status %></td>
+          <td><%= job.attempt_count %></td>
+          <td><%= job.created_at %></td>
+          <td><a href="/admin/jobs/<%= job.id %>">View</a></td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+</section>

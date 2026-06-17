@@ -1,0 +1,98 @@
+<section class="dashboard">
+  <p class="eyebrow">Admin</p>
+  <h1><%= title %></h1>
+
+  <dl>
+    <dt>ID</dt>
+    <dd><%= job.id %></dd>
+    <dt>Order ID</dt>
+    <dd><%= job.order_id || '' %></dd>
+    <dt>Shopify Line Item ID</dt>
+    <dd><%= job.shopify_line_item_id || '' %></dd>
+    <dt>Product</dt>
+    <dd><%= job.product_title || '' %></dd>
+    <dt>Variant</dt>
+    <dd><%= job.variant_title || '' %></dd>
+    <dt>SKU</dt>
+    <dd><%= job.sku || '' %></dd>
+    <dt>Master Asset</dt>
+    <dd><%= job.master_asset_id || '' %></dd>
+    <dt>Width MM</dt>
+    <dd><%= job.width_mm || '' %></dd>
+    <dt>Height MM</dt>
+    <dd><%= job.height_mm || '' %></dd>
+    <dt>Status</dt>
+    <dd><%= job.status %></dd>
+    <dt>Attempts</dt>
+    <dd><%= job.attempt_count %></dd>
+    <dt>Last Error</dt>
+    <dd><%= job.last_error || '' %></dd>
+    <dt>Created At</dt>
+    <dd><%= job.created_at %></dd>
+    <dt>Updated At</dt>
+    <dd><%= job.updated_at %></dd>
+  </dl>
+
+  <h2>Logs</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Level</th>
+        <th>Step</th>
+        <th>Message</th>
+        <th>Created At</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if (logs.length === 0) { %>
+        <tr>
+          <td colspan="5">No logs found.</td>
+        </tr>
+      <% } %>
+
+      <% logs.forEach((log) => { %>
+        <tr>
+          <td><%= log.id %></td>
+          <td><%= log.level %></td>
+          <td><%= log.step || '' %></td>
+          <td><%= log.message %></td>
+          <td><%= log.created_at %></td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+
+  <h2>Artifacts</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Type</th>
+        <th>File Name</th>
+        <th>Status</th>
+        <th>Download Count</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if (artifacts.length === 0) { %>
+        <tr>
+          <td colspan="5">No artifacts found.</td>
+        </tr>
+      <% } %>
+
+      <% artifacts.forEach((artifact) => { %>
+        <tr>
+          <td><%= artifact.id %></td>
+          <td><%= artifact.type %></td>
+          <td><%= artifact.file_name %></td>
+          <td><%= artifact.status %></td>
+          <td><%= artifact.download_count %></td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+
+  <h2>Raw Payload</h2>
+  <pre><%= rawPayloadJson %></pre>
+</section>

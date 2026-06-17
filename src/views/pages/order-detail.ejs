@@ -1,0 +1,88 @@
+<section class="dashboard">
+  <p class="eyebrow">Admin</p>
+  <h1><%= title %></h1>
+
+  <dl>
+    <dt>ID</dt>
+    <dd><%= order.id %></dd>
+    <dt>Order Number</dt>
+    <dd><%= order.shopify_order_number || '' %></dd>
+    <dt>Shopify Order ID</dt>
+    <dd><%= order.shopify_order_id || '' %></dd>
+    <dt>Customer</dt>
+    <dd><%= order.customer_name || '' %></dd>
+    <dt>Email</dt>
+    <dd><%= order.customer_email || '' %></dd>
+    <dt>Financial Status</dt>
+    <dd><%= order.financial_status || '' %></dd>
+    <dt>Status</dt>
+    <dd><%= order.status %></dd>
+    <dt>Created At</dt>
+    <dd><%= order.created_at %></dd>
+    <dt>Updated At</dt>
+    <dd><%= order.updated_at %></dd>
+  </dl>
+
+  <h2>Jobs</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Product</th>
+        <th>SKU</th>
+        <th>Status</th>
+        <th>Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if (jobs.length === 0) { %>
+        <tr>
+          <td colspan="5">No jobs found.</td>
+        </tr>
+      <% } %>
+
+      <% jobs.forEach((job) => { %>
+        <tr>
+          <td><%= job.id %></td>
+          <td><%= job.product_title || '' %></td>
+          <td><%= job.sku || '' %></td>
+          <td><%= job.status %></td>
+          <td><a href="/admin/jobs/<%= job.id %>">View</a></td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+
+  <h2>Logs</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Level</th>
+        <th>Step</th>
+        <th>Message</th>
+        <th>Created At</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if (logs.length === 0) { %>
+        <tr>
+          <td colspan="5">No logs found.</td>
+        </tr>
+      <% } %>
+
+      <% logs.forEach((log) => { %>
+        <tr>
+          <td><%= log.id %></td>
+          <td><%= log.level %></td>
+          <td><%= log.step || '' %></td>
+          <td><%= log.message %></td>
+          <td><%= log.created_at %></td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+
+  <h2>Raw Payload</h2>
+  <pre><%= rawPayloadJson %></pre>
+</section>
