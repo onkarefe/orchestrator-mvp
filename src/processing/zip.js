@@ -1,14 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 
 export function createZipFromEntries(zipPath, entries) {
   return new Promise((resolve, reject) => {
     fs.mkdirSync(path.dirname(zipPath), { recursive: true });
 
     const output = fs.createWriteStream(zipPath);
-    const archive = archiver('zip', { zlib: { level: 9 } });
+    const archive = new ZipArchive({ zlib: { level: 9 } });
     let settled = false;
 
     function fail(error) {
@@ -26,6 +26,11 @@ export function createZipFromEntries(zipPath, entries) {
     });
     output.on('error', fail);
     archive.on('error', fail);
+    archive.on('warning', (error) => {
+      if (error.code !== 'ENOENT') {
+        fail(error);
+      }
+    });
 
     archive.pipe(output);
 
