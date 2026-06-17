@@ -98,10 +98,9 @@ export async function listLogs({ scopeType, orderId, jobId, level, limit, offset
   }
 
   const whereSql = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
-  params.push(pagination.limit, pagination.offset);
 
   const [rows] = await pool.execute(
-    `SELECT * FROM logs${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    `SELECT * FROM logs${whereSql} ORDER BY created_at DESC LIMIT ${pagination.limit} OFFSET ${pagination.offset}`,
     params
   );
 

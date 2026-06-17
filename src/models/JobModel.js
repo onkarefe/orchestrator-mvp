@@ -109,10 +109,9 @@ export async function listJobs({ status, orderId, limit, offset } = {}) {
   }
 
   const whereSql = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
-  params.push(pagination.limit, pagination.offset);
 
   const [rows] = await pool.execute(
-    `SELECT * FROM jobs${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    `SELECT * FROM jobs${whereSql} ORDER BY created_at DESC LIMIT ${pagination.limit} OFFSET ${pagination.offset}`,
     params
   );
 
