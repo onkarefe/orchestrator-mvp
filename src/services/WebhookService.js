@@ -5,6 +5,7 @@ import {
   updateWebhookStatus,
 } from '../models/WebhookModel.js';
 import { logError, logInfo } from './LogService.js';
+import { createOrderAndJobsFromShopifyPayload } from './OrderService.js';
 
 export async function recordWebhook(data) {
   const webhook = await createWebhook({
@@ -51,6 +52,23 @@ export async function markWebhookFailed(id, errorMessage) {
   return webhook;
 }
 
+export async function processWebhookOrder(webhookId) {
+  const webhook = await findWebhookById(webhookId);
+
+  if (!webhook) {
+    throw new Error('Webhook not found');
+  }
+
+  const { order, jobs } = await createOrderAndJobsFromShopifyPayload(webhook.raw_payload_json);
+  const processedWebhook = await markWebhookProcessed(webhookId);
+
+  return {
+    webhook: processedWebhook,
+    order,
+    jobs,
+  };
+}
+
 export function getWebhook(id) {
   return findWebhookById(id);
 }
@@ -63,6 +81,7 @@ export default {
   recordWebhook,
   markWebhookProcessed,
   markWebhookFailed,
+  processWebhookOrder,
   getWebhook,
   getWebhooks,
 };
