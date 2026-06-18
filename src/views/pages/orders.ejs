@@ -1,39 +1,70 @@
-<section class="dashboard">
-  <p class="eyebrow">Admin</p>
-  <h1><%= title %></h1>
+<%
+  const display = (value) =>
+    value === null || value === undefined || value === '' ? '\u2014' : value;
+  const statusClass = (value) =>
+    `status-${String(value || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+%>
+<section class="page">
+  <header class="page-header">
+    <div>
+      <p class="eyebrow">Production</p>
+      <h1>Orders</h1>
+      <p class="page-description">Recent Shopify orders received by the orchestrator.</p>
+    </div>
+  </header>
 
-  <table>
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Order Number</th>
-        <th>Shopify Order ID</th>
-        <th>Customer</th>
-        <th>Financial Status</th>
-        <th>Status</th>
-        <th>Created At</th>
-        <th>Detail</th>
-      </tr>
-    </thead>
-    <tbody>
-      <% if (orders.length === 0) { %>
-        <tr>
-          <td colspan="8">No orders recorded yet.</td>
-        </tr>
-      <% } %>
+  <section class="table-card">
+    <div class="table-card-header">
+      <div>
+        <h2>Order inbox</h2>
+        <p class="muted"><%= orders.length %> recent record<%= orders.length === 1 ? '' : 's' %></p>
+      </div>
+    </div>
 
-      <% orders.forEach((order) => { %>
-        <tr>
-          <td><%= order.id %></td>
-          <td><%= order.shopify_order_number || '' %></td>
-          <td><%= order.shopify_order_id || '' %></td>
-          <td><%= order.customer_name || '' %></td>
-          <td><%= order.financial_status || '' %></td>
-          <td><%= order.status %></td>
-          <td><%= order.created_at %></td>
-          <td><a href="/admin/orders/<%= order.id %>">View</a></td>
-        </tr>
-      <% }) %>
-    </tbody>
-  </table>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Order</th>
+            <th scope="col">Shopify ID</th>
+            <th scope="col">Customer</th>
+            <th scope="col">Payment</th>
+            <th scope="col">Status</th>
+            <th scope="col">Created</th>
+            <th scope="col" class="table-action">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (orders.length === 0) { %>
+            <tr>
+              <td class="empty-state" colspan="7">No orders recorded yet.</td>
+            </tr>
+          <% } %>
+
+          <% orders.forEach((order) => { %>
+            <tr>
+              <td>
+                <a class="primary-link" href="/admin/orders/<%= order.id %>">
+                  <%= display(order.shopify_order_number) %>
+                </a>
+                <span class="cell-meta">Internal #<%= order.id %></span>
+              </td>
+              <td class="mono"><%= display(order.shopify_order_id) %></td>
+              <td><%= display(order.customer_name) %></td>
+              <td><%= display(order.financial_status) %></td>
+              <td>
+                <span class="status-badge <%= statusClass(order.status) %>">
+                  <%= display(order.status) %>
+                </span>
+              </td>
+              <td class="table-date"><%= display(order.created_at) %></td>
+              <td class="table-action">
+                <a class="button button-secondary button-small" href="/admin/orders/<%= order.id %>">Open</a>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
 </section>

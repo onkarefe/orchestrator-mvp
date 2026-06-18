@@ -1,45 +1,75 @@
-<section class="dashboard">
-  <p class="eyebrow">Admin</p>
-  <h1><%= title %></h1>
+<%
+  const display = (value) =>
+    value === null || value === undefined || value === '' ? '\u2014' : value;
+  const statusClass = (value) =>
+    `status-${String(value || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+%>
+<section class="page">
+  <header class="page-header">
+    <div>
+      <p class="eyebrow">Operations</p>
+      <h1>Jobs</h1>
+      <p class="page-description">Production work generated from configurator line items.</p>
+    </div>
+  </header>
 
-  <table>
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Order ID</th>
-        <th>Product</th>
-        <th>SKU</th>
-        <th>Master Asset</th>
-        <th>Width MM</th>
-        <th>Height MM</th>
-        <th>Status</th>
-        <th>Attempts</th>
-        <th>Created At</th>
-        <th>Detail</th>
-      </tr>
-    </thead>
-    <tbody>
-      <% if (jobs.length === 0) { %>
-        <tr>
-          <td colspan="11">No jobs recorded yet.</td>
-        </tr>
-      <% } %>
+  <section class="table-card">
+    <div class="table-card-header">
+      <div>
+        <h2>Processing queue</h2>
+        <p class="muted"><%= jobs.length %> recent job<%= jobs.length === 1 ? '' : 's' %></p>
+      </div>
+    </div>
 
-      <% jobs.forEach((job) => { %>
-        <tr>
-          <td><%= job.id %></td>
-          <td><%= job.order_id || '' %></td>
-          <td><%= job.product_title || '' %></td>
-          <td><%= job.sku || '' %></td>
-          <td><%= job.master_asset_id || '' %></td>
-          <td><%= job.width_mm || '' %></td>
-          <td><%= job.height_mm || '' %></td>
-          <td><%= job.status %></td>
-          <td><%= job.attempt_count %></td>
-          <td><%= job.created_at %></td>
-          <td><a href="/admin/jobs/<%= job.id %>">View</a></td>
-        </tr>
-      <% }) %>
-    </tbody>
-  </table>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Job</th>
+            <th scope="col">Order</th>
+            <th scope="col">Product</th>
+            <th scope="col">Output size</th>
+            <th scope="col">Status</th>
+            <th scope="col">Attempts</th>
+            <th scope="col">Created</th>
+            <th scope="col" class="table-action">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (jobs.length === 0) { %>
+            <tr>
+              <td class="empty-state" colspan="8">No jobs recorded yet.</td>
+            </tr>
+          <% } %>
+
+          <% jobs.forEach((job) => { %>
+            <tr>
+              <td>
+                <a class="primary-link mono" href="/admin/jobs/<%= job.id %>">#<%= job.id %></a>
+                <span class="cell-meta">Line item <%= display(job.shopify_line_item_id) %></span>
+              </td>
+              <td>
+                <% if (job.order_id) { %>
+                  <a class="secondary-link mono" href="/admin/orders/<%= job.order_id %>">#<%= job.order_id %></a>
+                <% } else { %>
+                  &mdash;
+                <% } %>
+              </td>
+              <td>
+                <span class="cell-title"><%= display(job.product_title) %></span>
+                <span class="cell-meta">SKU <%= display(job.sku) %></span>
+              </td>
+              <td class="mono"><%= display(job.width_mm) %> x <%= display(job.height_mm) %> mm</td>
+              <td><span class="status-badge <%= statusClass(job.status) %>"><%= display(job.status) %></span></td>
+              <td><%= display(job.attempt_count) %></td>
+              <td class="table-date"><%= display(job.created_at) %></td>
+              <td class="table-action">
+                <a class="button button-secondary button-small" href="/admin/jobs/<%= job.id %>">Open</a>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
 </section>

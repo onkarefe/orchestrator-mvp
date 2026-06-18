@@ -1,14 +1,72 @@
+<%
+  const currentTitle = title || 'Wandini Orchestrator';
+  const isOverview = currentTitle === 'Wandini Orchestrator';
+  const isOrders = currentTitle === 'Orders' || currentTitle.startsWith('Order #');
+  const isJobs = currentTitle === 'Jobs' || currentTitle.startsWith('Job #');
+  const isWebhooks = currentTitle === 'Webhook Inbox' || currentTitle.startsWith('Webhook #');
+%>
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title><%= title %></title>
+    <title><%= currentTitle %> | Wandini Orchestrator</title>
     <link rel="stylesheet" href="/css/app.css">
   </head>
   <body>
-    <main class="app-shell">
-      <%- body %>
-    </main>
+    <div class="admin-shell">
+      <aside class="admin-sidebar">
+        <a class="brand" href="/admin">
+          <span class="brand-mark" aria-hidden="true">W</span>
+          <span class="brand-copy">
+            <strong>Wandini</strong>
+            <small>Orchestrator</small>
+          </span>
+        </a>
+
+        <nav class="admin-nav" aria-label="Admin navigation">
+          <p class="nav-label">Workspace</p>
+          <a class="admin-nav-link<%= isOverview ? ' is-active' : '' %>" href="/admin">
+            <span class="nav-indicator" aria-hidden="true"></span>
+            Overview
+          </a>
+          <a class="admin-nav-link<%= isOrders ? ' is-active' : '' %>" href="/admin/orders">
+            <span class="nav-indicator" aria-hidden="true"></span>
+            Orders
+          </a>
+          <a class="admin-nav-link<%= isJobs ? ' is-active' : '' %>" href="/admin/jobs">
+            <span class="nav-indicator" aria-hidden="true"></span>
+            Jobs
+          </a>
+          <a class="admin-nav-link<%= isWebhooks ? ' is-active' : '' %>" href="/admin/webhooks">
+            <span class="nav-indicator" aria-hidden="true"></span>
+            Webhooks
+          </a>
+        </nav>
+
+        <div class="sidebar-footer">
+          <span>
+            <strong>Internal console</strong>
+            <small>Local environment</small>
+          </span>
+        </div>
+      </aside>
+
+      <div class="admin-main">
+        <header class="admin-header">
+          <div>
+            <p class="header-kicker">Production console</p>
+            <p class="header-title">Wandini Orchestrator</p>
+          </div>
+          <span class="environment-badge">Local Console</span>
+        </header>
+
+        <main class="admin-content">
+          <div class="page-container">
+            <%- body %>
+          </div>
+        </main>
+      </div>
+    </div>
   </body>
 </html>

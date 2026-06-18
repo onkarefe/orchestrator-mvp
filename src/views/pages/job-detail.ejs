@@ -1,104 +1,196 @@
-<section class="dashboard">
-  <p class="eyebrow">Admin</p>
-  <h1><%= title %></h1>
+<%
+  const display = (value) =>
+    value === null || value === undefined || value === '' ? '\u2014' : value;
+  const statusClass = (value) =>
+    `status-${String(value || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+%>
+<section class="page">
+  <header class="page-header page-header-with-actions">
+    <div>
+      <a class="back-link" href="/admin/jobs">Back to jobs</a>
+      <p class="eyebrow">Job detail</p>
+      <h1>Job #<%= job.id %></h1>
+      <p class="page-description"><%= display(job.product_title) %></p>
+    </div>
+    <span class="status-badge status-badge-large <%= statusClass(job.status) %>">
+      <%= display(job.status) %>
+    </span>
+  </header>
 
-  <dl>
-    <dt>ID</dt>
-    <dd><%= job.id %></dd>
-    <dt>Order ID</dt>
-    <dd><%= job.order_id || '' %></dd>
-    <dt>Shopify Line Item ID</dt>
-    <dd><%= job.shopify_line_item_id || '' %></dd>
-    <dt>Product</dt>
-    <dd><%= job.product_title || '' %></dd>
-    <dt>Variant</dt>
-    <dd><%= job.variant_title || '' %></dd>
-    <dt>SKU</dt>
-    <dd><%= job.sku || '' %></dd>
-    <dt>Master Asset</dt>
-    <dd><%= job.master_asset_id || '' %></dd>
-    <dt>Width MM</dt>
-    <dd><%= job.width_mm || '' %></dd>
-    <dt>Height MM</dt>
-    <dd><%= job.height_mm || '' %></dd>
-    <dt>Status</dt>
-    <dd><%= job.status %></dd>
-    <dt>Attempts</dt>
-    <dd><%= job.attempt_count %></dd>
-    <dt>Last Error</dt>
-    <dd><%= job.last_error || '' %></dd>
-    <dt>Created At</dt>
-    <dd><%= job.created_at %></dd>
-    <dt>Updated At</dt>
-    <dd><%= job.updated_at %></dd>
-  </dl>
+  <% if (job.last_error) { %>
+    <section class="alert-panel">
+      <div>
+        <p class="section-label">Latest error</p>
+        <strong><%= job.last_error %></strong>
+      </div>
+    </section>
+  <% } %>
 
-  <h2>Logs</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Level</th>
-        <th>Step</th>
-        <th>Message</th>
-        <th>Created At</th>
-      </tr>
-    </thead>
-    <tbody>
-      <% if (logs.length === 0) { %>
-        <tr>
-          <td colspan="5">No logs found.</td>
-        </tr>
-      <% } %>
+  <div class="detail-grid">
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <p class="section-label">Production</p>
+          <h2>Output summary</h2>
+        </div>
+      </div>
+      <dl class="meta-grid">
+        <div class="meta-item">
+          <dt>Output width</dt>
+          <dd><%= display(job.width_mm) %> mm</dd>
+        </div>
+        <div class="meta-item">
+          <dt>Output height</dt>
+          <dd><%= display(job.height_mm) %> mm</dd>
+        </div>
+        <div class="meta-item">
+          <dt>Master asset</dt>
+          <dd class="mono"><%= display(job.master_asset_id) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Attempts</dt>
+          <dd><%= display(job.attempt_count) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Created</dt>
+          <dd><%= display(job.created_at) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Updated</dt>
+          <dd><%= display(job.updated_at) %></dd>
+        </div>
+      </dl>
+    </section>
 
-      <% logs.forEach((log) => { %>
-        <tr>
-          <td><%= log.id %></td>
-          <td><%= log.level %></td>
-          <td><%= log.step || '' %></td>
-          <td><%= log.message %></td>
-          <td><%= log.created_at %></td>
-        </tr>
-      <% }) %>
-    </tbody>
-  </table>
-
-  <h2>Artifacts</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Type</th>
-        <th>File Name</th>
-        <th>Status</th>
-        <th>Download Count</th>
-        <th>Download</th>
-      </tr>
-    </thead>
-    <tbody>
-      <% if (artifacts.length === 0) { %>
-        <tr>
-          <td colspan="6">No artifacts found.</td>
-        </tr>
-      <% } %>
-
-      <% artifacts.forEach((artifact) => { %>
-        <tr>
-          <td><%= artifact.id %></td>
-          <td><%= artifact.type %></td>
-          <td><%= artifact.file_name %></td>
-          <td><%= artifact.status %></td>
-          <td><%= artifact.download_count %></td>
-          <td>
-            <% if (artifact.status === 'available') { %>
-              <a href="/admin/artifacts/<%= artifact.id %>/download">Download</a>
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <p class="section-label">Source</p>
+          <h2>Line item</h2>
+        </div>
+      </div>
+      <dl class="meta-grid meta-grid-single">
+        <div class="meta-item">
+          <dt>Order</dt>
+          <dd>
+            <% if (job.order_id) { %>
+              <a class="primary-link mono" href="/admin/orders/<%= job.order_id %>">Order #<%= job.order_id %></a>
+            <% } else { %>
+              &mdash;
             <% } %>
-          </td>
-        </tr>
-      <% }) %>
-    </tbody>
-  </table>
+          </dd>
+        </div>
+        <div class="meta-item">
+          <dt>Shopify line item</dt>
+          <dd class="mono"><%= display(job.shopify_line_item_id) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Product</dt>
+          <dd><%= display(job.product_title) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Variant</dt>
+          <dd><%= display(job.variant_title) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>SKU</dt>
+          <dd class="mono"><%= display(job.sku) %></dd>
+        </div>
+      </dl>
+    </section>
+  </div>
 
-  <h2>Raw Payload</h2>
-  <pre><%= rawPayloadJson %></pre>
+  <section class="table-card">
+    <div class="table-card-header">
+      <div>
+        <h2>Artifacts</h2>
+        <p class="muted"><%= artifacts.length %> generated file<%= artifacts.length === 1 ? '' : 's' %></p>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">File</th>
+            <th scope="col">Type</th>
+            <th scope="col">Status</th>
+            <th scope="col">Downloads</th>
+            <th scope="col" class="table-action">Output</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (artifacts.length === 0) { %>
+            <tr>
+              <td class="empty-state" colspan="5">No artifacts generated yet.</td>
+            </tr>
+          <% } %>
+          <% artifacts.forEach((artifact) => { %>
+            <tr>
+              <td>
+                <span class="cell-title"><%= display(artifact.file_name) %></span>
+                <span class="cell-meta">Artifact #<%= artifact.id %></span>
+              </td>
+              <td class="mono"><%= display(artifact.type) %></td>
+              <td><span class="status-badge <%= statusClass(artifact.status) %>"><%= display(artifact.status) %></span></td>
+              <td><%= display(artifact.download_count) %></td>
+              <td class="table-action">
+                <% if (artifact.status === 'available') { %>
+                  <a class="button button-small" href="/admin/artifacts/<%= artifact.id %>/download">Download</a>
+                <% } else { %>
+                  <span class="muted">&mdash;</span>
+                <% } %>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="table-card">
+    <div class="table-card-header">
+      <div>
+        <h2>Logs and events</h2>
+        <p class="muted"><%= logs.length %> event<%= logs.length === 1 ? '' : 's' %></p>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Level</th>
+            <th scope="col">Step</th>
+            <th scope="col">Message</th>
+            <th scope="col">Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (logs.length === 0) { %>
+            <tr>
+              <td class="empty-state" colspan="4">No logs recorded for this job.</td>
+            </tr>
+          <% } %>
+          <% logs.forEach((log) => { %>
+            <tr>
+              <td><span class="status-badge <%= statusClass(log.level) %>"><%= display(log.level) %></span></td>
+              <td class="mono"><%= display(log.step) %></td>
+              <td><%= display(log.message) %></td>
+              <td class="table-date"><%= display(log.created_at) %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <details class="card disclosure">
+    <summary>
+      <span>
+        <span class="section-label">Technical data</span>
+        <strong>Raw job payload</strong>
+      </span>
+      <span class="disclosure-hint">Show payload</span>
+    </summary>
+    <pre class="code-panel"><%= rawPayloadJson || '{}' %></pre>
+  </details>
 </section>

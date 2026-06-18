@@ -1,39 +1,65 @@
-<section class="dashboard">
-  <p class="eyebrow">Admin</p>
-  <h1><%= title %></h1>
+<%
+  const display = (value) =>
+    value === null || value === undefined || value === '' ? '\u2014' : value;
+  const statusClass = (value) =>
+    `status-${String(value || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const hmacLabel = (value) => {
+    if (value === null || value === undefined) return 'Not checked';
+    return value ? 'Valid' : 'Invalid';
+  };
+%>
+<section class="page">
+  <header class="page-header">
+    <div>
+      <p class="eyebrow">Diagnostics</p>
+      <h1>Webhook inbox</h1>
+      <p class="page-description">Recent Shopify events received by the local console.</p>
+    </div>
+  </header>
 
-  <table>
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Provider</th>
-        <th>Topic</th>
-        <th>Shopify Order ID</th>
-        <th>Status</th>
-        <th>HMAC Valid</th>
-        <th>Received At</th>
-        <th>Detail</th>
-      </tr>
-    </thead>
-    <tbody>
-      <% if (webhooks.length === 0) { %>
-        <tr>
-          <td colspan="8">No webhooks recorded yet.</td>
-        </tr>
-      <% } %>
-
-      <% webhooks.forEach((webhook) => { %>
-        <tr>
-          <td><%= webhook.id %></td>
-          <td><%= webhook.provider %></td>
-          <td><%= webhook.topic || '' %></td>
-          <td><%= webhook.shopify_order_id || '' %></td>
-          <td><%= webhook.status %></td>
-          <td><%= webhook.hmac_valid === null ? '' : webhook.hmac_valid %></td>
-          <td><%= webhook.received_at %></td>
-          <td><a href="/admin/webhooks/<%= webhook.id %>">View</a></td>
-        </tr>
-      <% }) %>
-    </tbody>
-  </table>
+  <section class="table-card">
+    <div class="table-card-header">
+      <div>
+        <h2>Incoming events</h2>
+        <p class="muted"><%= webhooks.length %> recent webhook<%= webhooks.length === 1 ? '' : 's' %></p>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Webhook</th>
+            <th scope="col">Provider</th>
+            <th scope="col">Topic</th>
+            <th scope="col">Shopify order</th>
+            <th scope="col">Status</th>
+            <th scope="col">HMAC</th>
+            <th scope="col">Received</th>
+            <th scope="col" class="table-action">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (webhooks.length === 0) { %>
+            <tr>
+              <td class="empty-state" colspan="8">No webhooks recorded yet.</td>
+            </tr>
+          <% } %>
+          <% webhooks.forEach((webhook) => { %>
+            <tr>
+              <td><a class="primary-link mono" href="/admin/webhooks/<%= webhook.id %>">#<%= webhook.id %></a></td>
+              <td><%= display(webhook.provider) %></td>
+              <td class="mono"><%= display(webhook.topic) %></td>
+              <td class="mono"><%= display(webhook.shopify_order_id) %></td>
+              <td><span class="status-badge <%= statusClass(webhook.status) %>"><%= display(webhook.status) %></span></td>
+              <td><span class="status-badge status-neutral"><%= hmacLabel(webhook.hmac_valid) %></span></td>
+              <td class="table-date"><%= display(webhook.received_at) %></td>
+              <td class="table-action">
+                <a class="button button-secondary button-small" href="/admin/webhooks/<%= webhook.id %>">Open</a>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
 </section>

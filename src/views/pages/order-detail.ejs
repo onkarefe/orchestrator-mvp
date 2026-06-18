@@ -1,88 +1,162 @@
-<section class="dashboard">
-  <p class="eyebrow">Admin</p>
-  <h1><%= title %></h1>
+<%
+  const display = (value) =>
+    value === null || value === undefined || value === '' ? '\u2014' : value;
+  const statusClass = (value) =>
+    `status-${String(value || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+%>
+<section class="page">
+  <header class="page-header page-header-with-actions">
+    <div>
+      <a class="back-link" href="/admin/orders">Back to orders</a>
+      <p class="eyebrow">Order detail</p>
+      <h1><%= display(order.shopify_order_number) %></h1>
+      <p class="page-description">Internal order #<%= order.id %></p>
+    </div>
+    <span class="status-badge status-badge-large <%= statusClass(order.status) %>">
+      <%= display(order.status) %>
+    </span>
+  </header>
 
-  <dl>
-    <dt>ID</dt>
-    <dd><%= order.id %></dd>
-    <dt>Order Number</dt>
-    <dd><%= order.shopify_order_number || '' %></dd>
-    <dt>Shopify Order ID</dt>
-    <dd><%= order.shopify_order_id || '' %></dd>
-    <dt>Customer</dt>
-    <dd><%= order.customer_name || '' %></dd>
-    <dt>Email</dt>
-    <dd><%= order.customer_email || '' %></dd>
-    <dt>Financial Status</dt>
-    <dd><%= order.financial_status || '' %></dd>
-    <dt>Status</dt>
-    <dd><%= order.status %></dd>
-    <dt>Created At</dt>
-    <dd><%= order.created_at %></dd>
-    <dt>Updated At</dt>
-    <dd><%= order.updated_at %></dd>
-  </dl>
+  <div class="detail-grid">
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <p class="section-label">Order</p>
+          <h2>Summary</h2>
+        </div>
+      </div>
+      <dl class="meta-grid">
+        <div class="meta-item">
+          <dt>Shopify order ID</dt>
+          <dd class="mono"><%= display(order.shopify_order_id) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Order number</dt>
+          <dd><%= display(order.shopify_order_number) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Financial status</dt>
+          <dd><%= display(order.financial_status) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Orchestrator status</dt>
+          <dd><span class="status-badge <%= statusClass(order.status) %>"><%= display(order.status) %></span></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Created</dt>
+          <dd><%= display(order.created_at) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Updated</dt>
+          <dd><%= display(order.updated_at) %></dd>
+        </div>
+      </dl>
+    </section>
 
-  <h2>Jobs</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Product</th>
-        <th>SKU</th>
-        <th>Status</th>
-        <th>Detail</th>
-      </tr>
-    </thead>
-    <tbody>
-      <% if (jobs.length === 0) { %>
-        <tr>
-          <td colspan="5">No jobs found.</td>
-        </tr>
-      <% } %>
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <p class="section-label">Customer</p>
+          <h2>Contact</h2>
+        </div>
+      </div>
+      <dl class="meta-grid meta-grid-single">
+        <div class="meta-item">
+          <dt>Name</dt>
+          <dd><%= display(order.customer_name) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Email</dt>
+          <dd><%= display(order.customer_email) %></dd>
+        </div>
+      </dl>
+    </section>
+  </div>
 
-      <% jobs.forEach((job) => { %>
-        <tr>
-          <td><%= job.id %></td>
-          <td><%= job.product_title || '' %></td>
-          <td><%= job.sku || '' %></td>
-          <td><%= job.status %></td>
-          <td><a href="/admin/jobs/<%= job.id %>">View</a></td>
-        </tr>
-      <% }) %>
-    </tbody>
-  </table>
+  <section class="table-card">
+    <div class="table-card-header">
+      <div>
+        <h2>Related jobs</h2>
+        <p class="muted"><%= jobs.length %> production job<%= jobs.length === 1 ? '' : 's' %></p>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Job</th>
+            <th scope="col">Product</th>
+            <th scope="col">SKU</th>
+            <th scope="col">Status</th>
+            <th scope="col" class="table-action">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (jobs.length === 0) { %>
+            <tr>
+              <td class="empty-state" colspan="5">No jobs found for this order.</td>
+            </tr>
+          <% } %>
+          <% jobs.forEach((job) => { %>
+            <tr>
+              <td class="mono">#<%= job.id %></td>
+              <td><%= display(job.product_title) %></td>
+              <td class="mono"><%= display(job.sku) %></td>
+              <td><span class="status-badge <%= statusClass(job.status) %>"><%= display(job.status) %></span></td>
+              <td class="table-action">
+                <a class="button button-secondary button-small" href="/admin/jobs/<%= job.id %>">Open</a>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
 
-  <h2>Logs</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Level</th>
-        <th>Step</th>
-        <th>Message</th>
-        <th>Created At</th>
-      </tr>
-    </thead>
-    <tbody>
-      <% if (logs.length === 0) { %>
-        <tr>
-          <td colspan="5">No logs found.</td>
-        </tr>
-      <% } %>
+  <section class="table-card">
+    <div class="table-card-header">
+      <div>
+        <h2>Activity log</h2>
+        <p class="muted"><%= logs.length %> event<%= logs.length === 1 ? '' : 's' %></p>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Level</th>
+            <th scope="col">Step</th>
+            <th scope="col">Message</th>
+            <th scope="col">Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (logs.length === 0) { %>
+            <tr>
+              <td class="empty-state" colspan="4">No activity recorded.</td>
+            </tr>
+          <% } %>
+          <% logs.forEach((log) => { %>
+            <tr>
+              <td><span class="status-badge <%= statusClass(log.level) %>"><%= display(log.level) %></span></td>
+              <td class="mono"><%= display(log.step) %></td>
+              <td><%= display(log.message) %></td>
+              <td class="table-date"><%= display(log.created_at) %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
 
-      <% logs.forEach((log) => { %>
-        <tr>
-          <td><%= log.id %></td>
-          <td><%= log.level %></td>
-          <td><%= log.step || '' %></td>
-          <td><%= log.message %></td>
-          <td><%= log.created_at %></td>
-        </tr>
-      <% }) %>
-    </tbody>
-  </table>
-
-  <h2>Raw Payload</h2>
-  <pre><%= rawPayloadJson %></pre>
+  <details class="card disclosure">
+    <summary>
+      <span>
+        <span class="section-label">Technical data</span>
+        <strong>Raw Shopify payload</strong>
+      </span>
+      <span class="disclosure-hint">Show payload</span>
+    </summary>
+    <pre class="code-panel"><%= rawPayloadJson || '{}' %></pre>
+  </details>
 </section>

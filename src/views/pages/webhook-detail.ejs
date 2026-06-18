@@ -1,29 +1,80 @@
-<section class="dashboard">
-  <p class="eyebrow">Admin</p>
-  <h1><%= title %></h1>
+<%
+  const display = (value) =>
+    value === null || value === undefined || value === '' ? '\u2014' : value;
+  const statusClass = (value) =>
+    `status-${String(value || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const hmacLabel = (value) => {
+    if (value === null || value === undefined) return 'Not checked';
+    return value ? 'Valid' : 'Invalid';
+  };
+%>
+<section class="page">
+  <header class="page-header page-header-with-actions">
+    <div>
+      <a class="back-link" href="/admin/webhooks">Back to webhooks</a>
+      <p class="eyebrow">Webhook detail</p>
+      <h1>Webhook #<%= webhook.id %></h1>
+      <p class="page-description"><%= display(webhook.topic) %></p>
+    </div>
+    <span class="status-badge status-badge-large <%= statusClass(webhook.status) %>">
+      <%= display(webhook.status) %>
+    </span>
+  </header>
 
-  <dl>
-    <dt>ID</dt>
-    <dd><%= webhook.id %></dd>
-    <dt>Provider</dt>
-    <dd><%= webhook.provider %></dd>
-    <dt>Topic</dt>
-    <dd><%= webhook.topic || '' %></dd>
-    <dt>Shopify Order ID</dt>
-    <dd><%= webhook.shopify_order_id || '' %></dd>
-    <dt>Status</dt>
-    <dd><%= webhook.status %></dd>
-    <dt>HMAC Valid</dt>
-    <dd><%= webhook.hmac_valid === null ? '' : webhook.hmac_valid %></dd>
-    <dt>Received At</dt>
-    <dd><%= webhook.received_at %></dd>
-    <dt>Processed At</dt>
-    <dd><%= webhook.processed_at || '' %></dd>
-  </dl>
+  <section class="card">
+    <div class="card-header">
+      <div>
+        <p class="section-label">Delivery</p>
+        <h2>Webhook summary</h2>
+      </div>
+    </div>
+    <dl class="meta-grid meta-grid-three">
+      <div class="meta-item">
+        <dt>Provider</dt>
+        <dd><%= display(webhook.provider) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Topic</dt>
+        <dd class="mono"><%= display(webhook.topic) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Shopify order ID</dt>
+        <dd class="mono"><%= display(webhook.shopify_order_id) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>HMAC</dt>
+        <dd><span class="status-badge status-neutral"><%= hmacLabel(webhook.hmac_valid) %></span></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Received</dt>
+        <dd><%= display(webhook.received_at) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Processed</dt>
+        <dd><%= display(webhook.processed_at) %></dd>
+      </div>
+    </dl>
+  </section>
 
-  <h2>Headers</h2>
-  <pre><%= headersJson %></pre>
+  <details class="card disclosure">
+    <summary>
+      <span>
+        <span class="section-label">Request metadata</span>
+        <strong>Headers</strong>
+      </span>
+      <span class="disclosure-hint">Show headers</span>
+    </summary>
+    <pre class="code-panel"><%= headersJson || '{}' %></pre>
+  </details>
 
-  <h2>Raw Payload</h2>
-  <pre><%= rawPayloadJson %></pre>
+  <details class="card disclosure">
+    <summary>
+      <span>
+        <span class="section-label">Technical data</span>
+        <strong>Raw payload</strong>
+      </span>
+      <span class="disclosure-hint">Show payload</span>
+    </summary>
+    <pre class="code-panel"><%= rawPayloadJson || '{}' %></pre>
+  </details>
 </section>
