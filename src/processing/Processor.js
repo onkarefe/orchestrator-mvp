@@ -32,6 +32,21 @@ function requirePositiveNumber(value, fieldName) {
   return numberValue;
 }
 
+function getShopifyOrderId(order) {
+  const rawPayload = parseJsonIfNeeded(order?.raw_payload_json);
+  const shopifyOrderId = rawPayload?.id ?? order?.shopify_order_id;
+
+  if (
+    shopifyOrderId === null ||
+    shopifyOrderId === undefined ||
+    shopifyOrderId === ''
+  ) {
+    throw new Error('Shopify order id is required');
+  }
+
+  return String(shopifyOrderId);
+}
+
 function validateJob(job) {
   if (!job?.id) {
     throw new Error('job.id is required');
@@ -58,6 +73,7 @@ function validateJob(job) {
 
 export async function processJobToZip({ order, job }) {
   const { widthMm, heightMm, cropRatio } = validateJob(job);
+  const shopifyOrderId = getShopifyOrderId(order);
   const masterPath = resolveMasterPath(job.master_asset_id);
   const panelInfo = computePanelsFromOutputMm(widthMm);
   const metadata = await getImageMetadata(masterPath);
@@ -68,14 +84,15 @@ export async function processJobToZip({ order, job }) {
   const pageWidthMm = widthMm / panelInfo.panelCount;
   const tempJobDir = path.join(tmpDir, `job-${job.id}`);
   const artifactDir = path.join(artifactsDir, `job-${job.id}`);
-  const zipFileName = `job-${job.id}.zip`;
+  const zipFileName = `w-${shopifyOrderId}.zip`;
   const zipPath = path.join(artifactDir, zipFileName);
   let panelLeft = safeCrop.left;
 
   await fs.mkdir(tempJobDir, { recursive: true });
 
   for (let index = 0; index < panelPixelWidths.length; index += 1) {
-    const panelFileName = `panel-${index + 1}.pdf`;
+    const panelNumber = String(index + 1).padStart(2, '0');
+    const panelFileName = `w-${shopifyOrderId}-${panelNumber}.pdf`;
     const tempPanelPath = path.join(tempJobDir, panelFileName);
     const panelCrop = {
       left: panelLeft,
@@ -101,7 +118,8 @@ export async function processJobToZip({ order, job }) {
     panelLeft += panelPixelWidths[index];
   }
 
-  const xmlTempPath = path.join(tempJobDir, 'order.xml');
+  const xmlFileName = `w-${shopifyOrderId}.xml`;
+  const xmlTempPath = path.join(tempJobDir, xmlFileName);
   await fs.writeFile(
     xmlTempPath,
     buildOrderXml({
@@ -111,14 +129,14 @@ export async function processJobToZip({ order, job }) {
         width_mm: widthMm,
         height_mm: heightMm,
       },
-      panelInfo,
+      shopifyOrderId,
       panelFiles,
     }),
     'utf8'
   );
 
   fileEntries.unshift({
-    name: 'order.xml',
+    name: xmlFileName,
     filePath: xmlTempPath,
   });
 
