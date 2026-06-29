@@ -15,12 +15,12 @@ const app = express();
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
-app.use(express.json());
 app.use(express.static(path.join(rootDir, 'public')));
 
+app.use(webhookRoutes);
+app.use(express.json());
 app.use(healthRoutes);
 app.use(adminRoutes);
-app.use(webhookRoutes);
 
 app.use((req, res) => {
   res.status(404).send('Not found');

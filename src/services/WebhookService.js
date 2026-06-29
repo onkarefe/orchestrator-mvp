@@ -12,9 +12,11 @@ export async function recordWebhook(data) {
     provider: data.provider,
     topic: data.topic,
     shopifyOrderId: data.shopifyOrderId,
+    status: data.status,
     hmacValid: data.hmacValid,
     headersJson: data.headersJson,
     rawPayloadJson: data.rawPayloadJson,
+    errorMessage: data.errorMessage,
   });
 
   await logInfo({
