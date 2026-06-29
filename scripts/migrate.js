@@ -12,9 +12,73 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
 const schemaPath = path.join(rootDir, 'src', 'db', 'schema.sql');
+const migrationsDir = path.join(rootDir, 'src', 'db', 'migrations');
 
 function quoteIdentifier(value) {
   return `\`${String(value).replaceAll('`', '``')}\``;
+}
+
+function hasExecutableSql(statement) {
+  return statement.split(/\r?\n/).some((line) => {
+    const trimmed = line.trim();
+
+    return trimmed && !trimmed.startsWith('--') && !trimmed.startsWith('#');
+  });
+}
+
+function splitSqlStatements(sql) {
+  return sql
+    .split(';')
+    .map((statement) => statement.trim())
+    .filter(hasExecutableSql);
+}
+
+async function readMigrationFiles() {
+  try {
+    const fileNames = await fs.readdir(migrationsDir);
+
+    return fileNames
+      .filter((fileName) => fileName.endsWith('.sql'))
+      .sort();
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return [];
+    }
+
+    throw error;
+  }
+}
+
+async function ensureSchemaMigrationsTable(pool) {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      name VARCHAR(255) NOT NULL,
+      applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_schema_migrations_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+}
+
+async function getAppliedMigrationNames(pool) {
+  const [rows] = await pool.query('SELECT name FROM schema_migrations');
+
+  return new Set(rows.map((row) => row.name));
+}
+
+async function applyMigrationFile(pool, fileName) {
+  const migrationPath = path.join(migrationsDir, fileName);
+  const migrationSql = await fs.readFile(migrationPath, 'utf8');
+  const statements = splitSqlStatements(migrationSql);
+
+  for (const statement of statements) {
+    await pool.query(statement);
+  }
+
+  await pool.execute('INSERT INTO schema_migrations (name) VALUES (?)', [
+    fileName,
+  ]);
 }
 
 async function migrate() {
@@ -23,10 +87,9 @@ async function migrate() {
 
   try {
     const schemaSql = await fs.readFile(schemaPath, 'utf8');
-    const statements = schemaSql
-      .split(';')
-      .map((statement) => statement.trim())
-      .filter((statement) => /^CREATE TABLE/i.test(statement));
+    const schemaStatements = splitSqlStatements(schemaSql).filter((statement) =>
+      /^CREATE TABLE/i.test(statement)
+    );
 
     console.log(`Creating database if needed: ${env.DB_NAME}`);
 
@@ -52,11 +115,29 @@ async function migrate() {
       queueLimit: 0,
     });
 
-    for (const statement of statements) {
+    await ensureSchemaMigrationsTable(pool);
+
+    for (const statement of schemaStatements) {
       await pool.query(statement);
     }
 
-    console.log(`Migration completed successfully. Tables checked: ${statements.length}`);
+    const migrationFiles = await readMigrationFiles();
+    const appliedMigrationNames = await getAppliedMigrationNames(pool);
+    let appliedMigrationCount = 0;
+
+    for (const fileName of migrationFiles) {
+      if (appliedMigrationNames.has(fileName)) {
+        continue;
+      }
+
+      await applyMigrationFile(pool, fileName);
+      appliedMigrationCount += 1;
+      console.log(`Applied migration: ${fileName}`);
+    }
+
+    console.log(
+      `Migration completed successfully. Tables checked: ${schemaStatements.length}. Migrations applied: ${appliedMigrationCount}`
+    );
   } catch (error) {
     console.error('Migration failed.');
     console.error(error.message);

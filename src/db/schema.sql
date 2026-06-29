@@ -6,18 +6,29 @@ CREATE TABLE IF NOT EXISTS orders (
   customer_email VARCHAR(191) NULL,
   financial_status VARCHAR(50) NULL,
   status VARCHAR(50) NOT NULL DEFAULT 'received',
+  manual_review_reason TEXT NULL,
+  last_error TEXT NULL,
+  validated_at TIMESTAMP NULL DEFAULT NULL,
+  artifact_ready_at TIMESTAMP NULL DEFAULT NULL,
+  ftp_uploaded_at TIMESTAMP NULL DEFAULT NULL,
+  factory_status VARCHAR(100) NULL,
+  factory_order_id VARCHAR(191) NULL,
   raw_payload_json JSON NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_orders_shopify_order_id (shopify_order_id),
   KEY idx_orders_shopify_order_number (shopify_order_number),
-  KEY idx_orders_status (status)
+  KEY idx_orders_status (status),
+  KEY idx_orders_factory_status (factory_status),
+  KEY idx_orders_factory_order_id (factory_order_id),
+  KEY idx_orders_artifact_ready_at (artifact_ready_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS jobs (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   order_id BIGINT UNSIGNED NULL,
+  shopify_order_id VARCHAR(191) NULL,
   shopify_line_item_id VARCHAR(191) NULL,
   product_title VARCHAR(255) NULL,
   variant_title VARCHAR(255) NULL,
@@ -30,7 +41,12 @@ CREATE TABLE IF NOT EXISTS jobs (
   panel_width_cm DECIMAL(10,4) NULL,
   status VARCHAR(50) NOT NULL DEFAULT 'pending',
   attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
+  max_attempts INT UNSIGNED NOT NULL DEFAULT 3,
+  locked_at TIMESTAMP NULL DEFAULT NULL,
+  locked_by VARCHAR(191) NULL,
+  manual_review_reason TEXT NULL,
   last_error TEXT NULL,
+  artifact_manifest_path VARCHAR(500) NULL,
   raw_payload_json JSON NULL,
   started_at TIMESTAMP NULL DEFAULT NULL,
   completed_at TIMESTAMP NULL DEFAULT NULL,
@@ -39,7 +55,11 @@ CREATE TABLE IF NOT EXISTS jobs (
   PRIMARY KEY (id),
   KEY idx_jobs_order_id (order_id),
   KEY idx_jobs_status (status),
+  KEY idx_jobs_shopify_order_id (shopify_order_id),
+  KEY idx_jobs_shopify_order_line_item (shopify_order_id, shopify_line_item_id),
   KEY idx_jobs_shopify_line_item_id (shopify_line_item_id),
+  KEY idx_jobs_locked_at (locked_at),
+  KEY idx_jobs_status_locked_at (status, locked_at),
   CONSTRAINT fk_jobs_order_id FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -48,8 +68,11 @@ CREATE TABLE IF NOT EXISTS webhooks (
   provider VARCHAR(100) NOT NULL DEFAULT 'shopify',
   topic VARCHAR(100) NULL,
   shopify_order_id VARCHAR(191) NULL,
+  delivery_id VARCHAR(191) NULL,
   status VARCHAR(50) NOT NULL DEFAULT 'received',
+  processing_status VARCHAR(50) NOT NULL DEFAULT 'pending',
   hmac_valid TINYINT(1) NULL,
+  duplicate_of_id BIGINT UNSIGNED NULL,
   headers_json JSON NULL,
   raw_payload_json JSON NULL,
   error_message TEXT NULL,
@@ -61,7 +84,11 @@ CREATE TABLE IF NOT EXISTS webhooks (
   KEY idx_webhooks_provider (provider),
   KEY idx_webhooks_topic (topic),
   KEY idx_webhooks_status (status),
-  KEY idx_webhooks_shopify_order_id (shopify_order_id)
+  KEY idx_webhooks_processing_status (processing_status),
+  KEY idx_webhooks_shopify_order_id (shopify_order_id),
+  KEY idx_webhooks_delivery_id (delivery_id),
+  KEY idx_webhooks_duplicate_of_id (duplicate_of_id),
+  CONSTRAINT fk_webhooks_duplicate_of_id FOREIGN KEY (duplicate_of_id) REFERENCES webhooks (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS logs (
@@ -91,10 +118,15 @@ CREATE TABLE IF NOT EXISTS artifacts (
   type VARCHAR(50) NOT NULL,
   file_name VARCHAR(255) NOT NULL,
   file_path VARCHAR(500) NOT NULL,
+  manifest_path VARCHAR(500) NULL,
+  checksum VARCHAR(128) NULL,
+  file_count INT UNSIGNED NULL,
+  total_size_bytes BIGINT UNSIGNED NULL,
   file_size BIGINT UNSIGNED NULL,
   expires_at TIMESTAMP NULL DEFAULT NULL,
   download_count INT UNSIGNED NOT NULL DEFAULT 0,
   status VARCHAR(50) NOT NULL DEFAULT 'available',
+  validation_status VARCHAR(50) NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -102,9 +134,65 @@ CREATE TABLE IF NOT EXISTS artifacts (
   KEY idx_artifacts_job_id (job_id),
   KEY idx_artifacts_type (type),
   KEY idx_artifacts_status (status),
+  KEY idx_artifacts_validation_status (validation_status),
+  KEY idx_artifacts_checksum (checksum),
   KEY idx_artifacts_expires_at (expires_at),
   CONSTRAINT fk_artifacts_order_id FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE SET NULL,
   CONSTRAINT fk_artifacts_job_id FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS factory_callbacks (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  order_id BIGINT UNSIGNED NULL,
+  shopify_order_id VARCHAR(191) NULL,
+  order_number VARCHAR(191) NULL,
+  factory_order_id VARCHAR(191) NULL,
+  delivery_id VARCHAR(191) NULL,
+  status VARCHAR(100) NULL,
+  raw_payload_json JSON NULL,
+  headers_json JSON NULL,
+  auth_valid TINYINT(1) NULL,
+  duplicate_of_id BIGINT UNSIGNED NULL,
+  processing_status VARCHAR(50) NOT NULL DEFAULT 'received',
+  error_message TEXT NULL,
+  received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_factory_callbacks_order_id (order_id),
+  KEY idx_factory_callbacks_shopify_order_id (shopify_order_id),
+  KEY idx_factory_callbacks_factory_order_id (factory_order_id),
+  KEY idx_factory_callbacks_delivery_id (delivery_id),
+  KEY idx_factory_callbacks_status (status),
+  KEY idx_factory_callbacks_processing_status (processing_status),
+  KEY idx_factory_callbacks_duplicate_of_id (duplicate_of_id),
+  CONSTRAINT fk_factory_callbacks_order_id FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE SET NULL,
+  CONSTRAINT fk_factory_callbacks_duplicate_of_id FOREIGN KEY (duplicate_of_id) REFERENCES factory_callbacks (id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS shopify_update_tasks (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  order_id BIGINT UNSIGNED NULL,
+  shopify_order_id VARCHAR(191) NULL,
+  task_type VARCHAR(100) NOT NULL,
+  status VARCHAR(50) NOT NULL DEFAULT 'pending',
+  payload_json JSON NULL,
+  dry_run TINYINT(1) NOT NULL DEFAULT 1,
+  attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
+  max_attempts INT UNSIGNED NOT NULL DEFAULT 3,
+  locked_at TIMESTAMP NULL DEFAULT NULL,
+  locked_by VARCHAR(191) NULL,
+  last_error TEXT NULL,
+  processed_at TIMESTAMP NULL DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_shopify_update_tasks_order_id (order_id),
+  KEY idx_shopify_update_tasks_shopify_order_id (shopify_order_id),
+  KEY idx_shopify_update_tasks_status (status),
+  KEY idx_shopify_update_tasks_status_locked_at (status, locked_at),
+  KEY idx_shopify_update_tasks_task_type (task_type),
+  CONSTRAINT fk_shopify_update_tasks_order_id FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -115,4 +203,12 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_settings_setting_key (setting_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  name VARCHAR(255) NOT NULL,
+  applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_schema_migrations_name (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
