@@ -1,3 +1,5 @@
+import { ORDER_STATUSES } from '../constants/statuses.js';
+import pool from '../db/connection.js';
 import {
   createOrder,
   findOrderByShopifyOrderId,
@@ -22,6 +24,12 @@ function getCustomerName(payload) {
   return fullName || null;
 }
 
+async function writeInfoLogs(logEvents) {
+  for (const logEvent of logEvents) {
+    await logInfo(logEvent);
+  }
+}
+
 export async function createOrderAndJobsFromShopifyPayload(payload) {
   const shopifyOrderId = payload?.id;
 
@@ -29,98 +37,167 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
     throw new Error('Shopify order id is required');
   }
 
-  const existingOrder = await findOrderByShopifyOrderId(shopifyOrderId);
+  const connection = await pool.getConnection();
+  const logEvents = [];
+  let transactionStarted = false;
 
-  if (existingOrder) {
-    return {
-      order: existingOrder,
-      jobs: [],
-      created: false,
-    };
-  }
+  try {
+    await connection.beginTransaction();
+    transactionStarted = true;
 
-  let order = await createOrder({
-    shopifyOrderId,
-    shopifyOrderNumber: payload.name ?? payload.order_number ?? null,
-    customerName: getCustomerName(payload),
-    customerEmail: payload.email ?? payload.customer?.email ?? null,
-    financialStatus: payload.financial_status ?? null,
-    status: 'received',
-    rawPayloadJson: payload,
-  });
-
-  await logInfo({
-    scopeType: 'order',
-    orderId: order.id,
-    step: 'order.created',
-    message: 'Order created from Shopify webhook',
-    detailsJson: {
+    const existingOrder = await findOrderByShopifyOrderId(
       shopifyOrderId,
-      shopifyOrderNumber: order.shopify_order_number,
-    },
-  });
+      connection
+    );
 
-  const jobs = [];
-  const lineItems = Array.isArray(payload.line_items) ? payload.line_items : [];
+    if (existingOrder) {
+      await connection.commit();
+      transactionStarted = false;
 
-  for (const lineItem of lineItems) {
-    try {
-      const job = await createConfiguratorJobFromLineItem(order.id, lineItem);
+      await logInfo({
+        scopeType: 'order',
+        orderId: existingOrder.id,
+        step: 'order.duplicate_shopify_order',
+        message: 'Duplicate Shopify order webhook ignored',
+        detailsJson: {
+          shopifyOrderId,
+          shopifyOrderNumber: existingOrder.shopify_order_number,
+        },
+      });
 
-      if (!job) {
+      return {
+        order: existingOrder,
+        jobs: [],
+        created: false,
+        duplicate: true,
+      };
+    }
+
+    let order = await createOrder(
+      {
+        shopifyOrderId,
+        shopifyOrderNumber: payload.name ?? payload.order_number ?? null,
+        customerName: getCustomerName(payload),
+        customerEmail: payload.email ?? payload.customer?.email ?? null,
+        financialStatus: payload.financial_status ?? null,
+        status: ORDER_STATUSES.RECEIVED,
+        rawPayloadJson: payload,
+      },
+      connection
+    );
+
+    logEvents.push({
+      scopeType: 'order',
+      orderId: order.id,
+      step: 'order.created',
+      message: 'Order created from Shopify webhook',
+      detailsJson: {
+        shopifyOrderId,
+        shopifyOrderNumber: order.shopify_order_number,
+      },
+    });
+
+    const jobs = [];
+    const skippedDuplicateJobs = [];
+    const lineItems = Array.isArray(payload.line_items) ? payload.line_items : [];
+
+    for (const lineItem of lineItems) {
+      const result = await createConfiguratorJobFromLineItem(
+        order.id,
+        lineItem,
+        {
+          shopifyOrderId,
+          db: connection,
+        }
+      );
+
+      if (!result?.job) {
         continue;
       }
 
-      jobs.push(job);
+      if (result.duplicate) {
+        skippedDuplicateJobs.push(result.job);
 
-      await logInfo({
+        logEvents.push({
+          scopeType: 'job',
+          orderId: result.job.order_id ?? order.id,
+          jobId: result.job.id,
+          step: 'job.duplicate_line_item_skipped',
+          message: 'Duplicate Shopify line item job skipped',
+          detailsJson: {
+            shopifyOrderId,
+            shopifyLineItemId: result.job.shopify_line_item_id,
+          },
+        });
+
+        continue;
+      }
+
+      jobs.push(result.job);
+
+      logEvents.push({
         scopeType: 'job',
         orderId: order.id,
-        jobId: job.id,
+        jobId: result.job.id,
         step: 'job.created',
         message: 'Configurator job created from Shopify line item',
         detailsJson: {
-          shopifyLineItemId: job.shopify_line_item_id,
-          productTitle: job.product_title,
+          shopifyLineItemId: result.job.shopify_line_item_id,
+          productTitle: result.job.product_title,
         },
       });
-    } catch (error) {
-      await logError({
+    }
+
+    if (jobs.length > 0) {
+      order = await updateOrderStatus(order.id, 'queued', connection);
+    } else {
+      order = await updateOrderStatus(
+        order.id,
+        ORDER_STATUSES.RECEIVED,
+        connection
+      );
+
+      logEvents.push({
         scopeType: 'order',
         orderId: order.id,
-        step: 'job.create_failed',
-        message: 'Failed to create configurator job',
+        step: 'order.no_configurator_jobs',
+        message: 'Order did not contain configurator jobs',
         detailsJson: {
-          lineItemId: lineItem?.id ?? null,
-          errorMessage: error.message,
+          shopifyOrderId,
         },
       });
-
-      throw error;
     }
-  }
 
-  if (jobs.length > 0) {
-    order = await updateOrderStatus(order.id, 'queued');
-  } else {
-    order = await updateOrderStatus(order.id, 'received');
+    await connection.commit();
+    transactionStarted = false;
+    await writeInfoLogs(logEvents);
 
-    await logInfo({
-      scopeType: 'order',
-      orderId: order.id,
-      step: 'order.no_configurator_jobs',
-      message: 'Order did not contain configurator jobs',
+    return {
+      order,
+      jobs,
+      created: true,
+      duplicate: false,
+      skippedDuplicateJobs,
+    };
+  } catch (error) {
+    if (transactionStarted) {
+      await connection.rollback();
+    }
+
+    await logError({
+      scopeType: 'system',
+      step: 'order.create_failed',
+      message: 'Failed to create order/jobs from Shopify webhook',
       detailsJson: {
         shopifyOrderId,
+        errorMessage: error.message,
       },
     });
-  }
 
-  return {
-    order,
-    jobs,
-    created: true,
-  };
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 export default {

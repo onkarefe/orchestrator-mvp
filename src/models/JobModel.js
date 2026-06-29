@@ -42,10 +42,16 @@ function normalizeJob(row) {
   };
 }
 
-export async function createJob(data) {
-  const [result] = await pool.execute(
+function getExecutor(db) {
+  return db ?? pool;
+}
+
+export async function createJob(data, db = pool) {
+  const executor = getExecutor(db);
+  const [result] = await executor.execute(
     `INSERT INTO jobs (
       order_id,
+      shopify_order_id,
       shopify_line_item_id,
       product_title,
       variant_title,
@@ -62,9 +68,10 @@ export async function createJob(data) {
       raw_payload_json,
       started_at,
       completed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.orderId ?? data.order_id ?? null,
+      data.shopifyOrderId ?? data.shopify_order_id ?? null,
       data.shopifyLineItemId ?? data.shopify_line_item_id ?? null,
       data.productTitle ?? data.product_title ?? null,
       data.variantTitle ?? data.variant_title ?? null,
@@ -84,11 +91,40 @@ export async function createJob(data) {
     ]
   );
 
-  return findJobById(result.insertId);
+  return findJobById(result.insertId, executor);
 }
 
-export async function findJobById(id) {
-  const [rows] = await pool.execute('SELECT * FROM jobs WHERE id = ? LIMIT 1', [id]);
+export async function findJobById(id, db = pool) {
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute('SELECT * FROM jobs WHERE id = ? LIMIT 1', [id]);
+
+  return normalizeJob(rows[0]);
+}
+
+export async function findJobByShopifyOrderAndLineItem(
+  shopifyOrderId,
+  shopifyLineItemId,
+  db = pool
+) {
+  if (
+    shopifyOrderId === null ||
+    shopifyOrderId === undefined ||
+    shopifyOrderId === '' ||
+    shopifyLineItemId === null ||
+    shopifyLineItemId === undefined ||
+    shopifyLineItemId === ''
+  ) {
+    return null;
+  }
+
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
+    `SELECT * FROM jobs
+    WHERE shopify_order_id = ?
+      AND shopify_line_item_id = ?
+    LIMIT 1`,
+    [shopifyOrderId, shopifyLineItemId]
+  );
 
   return normalizeJob(rows[0]);
 }
@@ -160,6 +196,7 @@ export async function incrementJobAttempt(id) {
 export default {
   createJob,
   findJobById,
+  findJobByShopifyOrderAndLineItem,
   listJobs,
   updateJobStatus,
   markJobProcessing,

@@ -41,8 +41,13 @@ function normalizeOrder(row) {
   };
 }
 
-export async function createOrder(data) {
-  const [result] = await pool.execute(
+function getExecutor(db) {
+  return db ?? pool;
+}
+
+export async function createOrder(data, db = pool) {
+  const executor = getExecutor(db);
+  const [result] = await executor.execute(
     `INSERT INTO orders (
       shopify_order_id,
       shopify_order_number,
@@ -63,17 +68,19 @@ export async function createOrder(data) {
     ]
   );
 
-  return findOrderById(result.insertId);
+  return findOrderById(result.insertId, executor);
 }
 
-export async function findOrderById(id) {
-  const [rows] = await pool.execute('SELECT * FROM orders WHERE id = ? LIMIT 1', [id]);
+export async function findOrderById(id, db = pool) {
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute('SELECT * FROM orders WHERE id = ? LIMIT 1', [id]);
 
   return normalizeOrder(rows[0]);
 }
 
-export async function findOrderByShopifyOrderId(shopifyOrderId) {
-  const [rows] = await pool.execute(
+export async function findOrderByShopifyOrderId(shopifyOrderId, db = pool) {
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
     'SELECT * FROM orders WHERE shopify_order_id = ? LIMIT 1',
     [shopifyOrderId]
   );
@@ -101,10 +108,12 @@ export async function listOrders({ status, limit, offset } = {}) {
   return rows.map(normalizeOrder);
 }
 
-export async function updateOrderStatus(id, status) {
-  await pool.execute('UPDATE orders SET status = ? WHERE id = ?', [status, id]);
+export async function updateOrderStatus(id, status, db = pool) {
+  const executor = getExecutor(db);
 
-  return findOrderById(id);
+  await executor.execute('UPDATE orders SET status = ? WHERE id = ?', [status, id]);
+
+  return findOrderById(id, executor);
 }
 
 export default {

@@ -1,20 +1,14 @@
 import env from '../../config/env.js';
+import { WEBHOOK_PROCESSING_STATUSES } from '../../constants/statuses.js';
 import {
+  getWebhookByDeliveryId,
   markWebhookFailed,
   processWebhookOrder,
   recordWebhook,
 } from '../../services/WebhookService.js';
 import { logWarning } from '../../services/LogService.js';
+import { redact, safeErrorForLog } from '../../utils/redact.js';
 import { verifyShopifyWebhookHmac } from '../../utils/shopifyHmac.js';
-
-const REDACTED_HEADER_VALUE = '[REDACTED]';
-const SENSITIVE_HEADER_NAMES = new Set([
-  'authorization',
-  'cookie',
-  'set-cookie',
-  'x-shopify-hmac-sha256',
-  'x-shopify-access-token',
-]);
 
 function getRawBody(req) {
   if (Buffer.isBuffer(req.rawBody)) {
@@ -42,19 +36,14 @@ function parseRawJson(rawBody) {
   return JSON.parse(text);
 }
 
-function redactHeaders(headers) {
-  return Object.fromEntries(
-    Object.entries(headers ?? {}).map(([key, value]) => [
-      key,
-      SENSITIVE_HEADER_NAMES.has(key.toLowerCase())
-        ? REDACTED_HEADER_VALUE
-        : value,
-    ])
-  );
-}
-
 function getShopifyHmacHeader(req) {
   return req.get('x-shopify-hmac-sha256');
+}
+
+function getShopifyDeliveryId(req) {
+  const deliveryId = req.get('x-shopify-webhook-id');
+
+  return deliveryId ? String(deliveryId).trim() || null : null;
 }
 
 async function recordRejectedWebhook({
@@ -80,17 +69,22 @@ async function recordRejectedWebhook({
       provider: 'shopify',
       topic: 'orders/paid',
       shopifyOrderId: payload?.id ?? null,
-      status: 'failed',
+      deliveryId: getShopifyDeliveryId(req),
+      status: WEBHOOK_PROCESSING_STATUSES.FAILED,
+      processingStatus:
+        hmacValid === false
+          ? WEBHOOK_PROCESSING_STATUSES.INVALID_HMAC
+          : WEBHOOK_PROCESSING_STATUSES.FAILED,
       hmacValid,
-      headersJson: redactHeaders(req.headers),
+      headersJson: redact(req.headers),
       rawPayloadJson: payload,
       errorMessage,
     });
   } catch (error) {
-    console.error('Rejected Shopify webhook recording failed:', {
-      name: error.name,
-      message: error.message,
-    });
+    console.error(
+      'Rejected Shopify webhook recording failed:',
+      safeErrorForLog(error)
+    );
     return null;
   }
 }
@@ -99,6 +93,7 @@ export async function recordOrdersPaidWebhook(req, res) {
   let webhook = null;
   const rawBody = getRawBody(req);
   const hmacHeader = getShopifyHmacHeader(req);
+  const deliveryId = getShopifyDeliveryId(req);
   const hmacWasChecked = Boolean(env.SHOPIFY_WEBHOOK_SECRET && hmacHeader);
   const hmacValid = verifyShopifyWebhookHmac({
     rawBody,
@@ -153,17 +148,75 @@ export async function recordOrdersPaidWebhook(req, res) {
     return;
   }
 
+  if (deliveryId) {
+    let originalWebhook = null;
+
+    try {
+      originalWebhook = await getWebhookByDeliveryId(deliveryId);
+    } catch (error) {
+      console.error(
+        'Shopify webhook duplicate lookup failed:',
+        safeErrorForLog(error)
+      );
+
+      res.status(500).json({
+        ok: false,
+        error: 'webhook_duplicate_lookup_failed',
+      });
+      return;
+    }
+
+    if (originalWebhook) {
+      let duplicateWebhook = null;
+
+      try {
+        duplicateWebhook = await recordWebhook({
+          provider: 'shopify',
+          topic: 'orders/paid',
+          shopifyOrderId: payload?.id ?? null,
+          deliveryId,
+          status: 'received',
+          processingStatus: WEBHOOK_PROCESSING_STATUSES.DUPLICATE,
+          hmacValid: hmacWasChecked ? hmacValid : null,
+          duplicateOfId: originalWebhook.id,
+          headersJson: redact(req.headers),
+          rawPayloadJson: payload,
+          errorMessage: 'Duplicate Shopify webhook delivery',
+        });
+      } catch (error) {
+        console.error(
+          'Duplicate Shopify webhook recording failed:',
+          safeErrorForLog(error)
+        );
+      }
+
+      res.status(200).json({
+        ok: true,
+        status: WEBHOOK_PROCESSING_STATUSES.DUPLICATE,
+        duplicate: true,
+        webhookId: duplicateWebhook?.id ?? null,
+        duplicateOfId: originalWebhook.id,
+        orderId: null,
+        jobCount: 0,
+      });
+      return;
+    }
+  }
+
   try {
     webhook = await recordWebhook({
       provider: 'shopify',
       topic: 'orders/paid',
       shopifyOrderId: payload?.id ?? null,
+      deliveryId,
+      status: 'received',
+      processingStatus: WEBHOOK_PROCESSING_STATUSES.PENDING,
       hmacValid: hmacWasChecked ? hmacValid : null,
-      headersJson: redactHeaders(req.headers),
+      headersJson: redact(req.headers),
       rawPayloadJson: payload,
     });
   } catch (error) {
-    console.error('Shopify webhook recording failed:', error);
+    console.error('Shopify webhook recording failed:', safeErrorForLog(error));
 
     res.status(500).json({
       ok: false,
@@ -177,13 +230,15 @@ export async function recordOrdersPaidWebhook(req, res) {
 
     res.status(200).json({
       ok: true,
-      status: 'processed',
+      status: result.duplicate ? 'already_processed' : 'processed',
+      duplicate: Boolean(result.duplicate),
       webhookId: webhook.id,
       orderId: result.order.id,
       jobCount: result.jobs.length,
+      skippedDuplicateJobCount: result.skippedDuplicateJobs?.length ?? 0,
     });
   } catch (error) {
-    console.error('Shopify webhook processing failed:', error);
+    console.error('Shopify webhook processing failed:', safeErrorForLog(error));
 
     await markWebhookFailed(webhook.id, error.message);
 

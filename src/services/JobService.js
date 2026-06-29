@@ -1,4 +1,9 @@
-import { createJob, listJobs } from '../models/JobModel.js';
+import { JOB_STATUSES } from '../constants/statuses.js';
+import {
+  createJob,
+  findJobByShopifyOrderAndLineItem,
+  listJobs,
+} from '../models/JobModel.js';
 
 function findConfiguratorPayloadProperty(lineItem) {
   const properties = Array.isArray(lineItem?.properties) ? lineItem.properties : [];
@@ -73,30 +78,66 @@ function isValidConfiguratorPayload(configuratorPayload) {
   );
 }
 
-export async function createConfiguratorJobFromLineItem(orderId, lineItem) {
+export async function createConfiguratorJobFromLineItem(
+  orderId,
+  lineItem,
+  { shopifyOrderId = null, db = undefined } = {}
+) {
   const payloadProperty = findConfiguratorPayloadProperty(lineItem);
   const configuratorPayload = parseConfiguratorPayload(payloadProperty?.value);
 
   if (!isValidConfiguratorPayload(configuratorPayload)) {
-    return null;
+    return {
+      job: null,
+      created: false,
+      duplicate: false,
+      reason: 'invalid_configurator_payload',
+    };
   }
 
-  return createJob({
-    orderId,
-    shopifyLineItemId: lineItem.id ?? null,
-    productTitle: lineItem.title ?? lineItem.name ?? null,
-    variantTitle: lineItem.variant_title ?? null,
-    sku: lineItem.sku ?? null,
-    masterAssetId: configuratorPayload.master_asset_id ?? null,
-    widthMm: configuratorPayload.output?.width ?? null,
-    heightMm: configuratorPayload.output?.height ?? null,
-    cropRatioJson: configuratorPayload.crop_ratio ?? null,
-    rawPayloadJson: {
-      lineItem,
-      configuratorPayload,
+  const shopifyLineItemId = lineItem.id ?? null;
+  const existingJob = await findJobByShopifyOrderAndLineItem(
+    shopifyOrderId,
+    shopifyLineItemId,
+    db
+  );
+
+  if (existingJob) {
+    return {
+      job: existingJob,
+      created: false,
+      duplicate: true,
+      reason: 'duplicate_line_item',
+    };
+  }
+
+  const job = await createJob(
+    {
+      orderId,
+      shopifyOrderId,
+      shopifyLineItemId,
+      productTitle: lineItem.title ?? lineItem.name ?? null,
+      variantTitle: lineItem.variant_title ?? null,
+      sku: lineItem.sku ?? null,
+      masterAssetId: configuratorPayload.master_asset_id ?? null,
+      widthMm: configuratorPayload.output?.width ?? null,
+      heightMm: configuratorPayload.output?.height ?? null,
+      cropRatioJson: configuratorPayload.crop_ratio ?? null,
+      rawPayloadJson: {
+        lineItem,
+        configuratorPayload,
+      },
+      status: JOB_STATUSES.PENDING,
     },
-    status: 'pending',
-  });
+    db
+  );
+
+  return {
+    job,
+    created: true,
+    duplicate: false,
+    reason: null,
+  };
 }
 
 export function getJobs(filters) {

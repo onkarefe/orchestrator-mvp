@@ -50,25 +50,36 @@ function normalizeWebhook(row) {
   };
 }
 
-export async function createWebhook(data) {
-  const [result] = await pool.execute(
+function getExecutor(db) {
+  return db ?? pool;
+}
+
+export async function createWebhook(data, db = pool) {
+  const executor = getExecutor(db);
+  const [result] = await executor.execute(
     `INSERT INTO webhooks (
       provider,
       topic,
       shopify_order_id,
+      delivery_id,
       status,
+      processing_status,
       hmac_valid,
+      duplicate_of_id,
       headers_json,
       raw_payload_json,
       error_message,
       processed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.provider ?? 'shopify',
       data.topic ?? null,
       data.shopifyOrderId ?? data.shopify_order_id ?? null,
+      data.deliveryId ?? data.delivery_id ?? null,
       data.status ?? 'received',
+      data.processingStatus ?? data.processing_status ?? 'pending',
       tinyIntForWrite(data.hmacValid ?? data.hmac_valid ?? null),
+      data.duplicateOfId ?? data.duplicate_of_id ?? null,
       jsonForWrite(data.headersJson ?? data.headers_json ?? null),
       jsonForWrite(data.rawPayloadJson ?? data.raw_payload_json ?? null),
       data.errorMessage ?? data.error_message ?? null,
@@ -76,11 +87,29 @@ export async function createWebhook(data) {
     ]
   );
 
-  return findWebhookById(result.insertId);
+  return findWebhookById(result.insertId, executor);
 }
 
-export async function findWebhookById(id) {
-  const [rows] = await pool.execute('SELECT * FROM webhooks WHERE id = ? LIMIT 1', [id]);
+export async function findWebhookById(id, db = pool) {
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute('SELECT * FROM webhooks WHERE id = ? LIMIT 1', [id]);
+
+  return normalizeWebhook(rows[0]);
+}
+
+export async function findWebhookByDeliveryId(deliveryId, db = pool) {
+  if (deliveryId === null || deliveryId === undefined || deliveryId === '') {
+    return null;
+  }
+
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
+    `SELECT * FROM webhooks
+    WHERE delivery_id = ?
+    ORDER BY id ASC
+    LIMIT 1`,
+    [deliveryId]
+  );
 
   return normalizeWebhook(rows[0]);
 }
@@ -105,18 +134,27 @@ export async function listWebhooks({ status, limit, offset } = {}) {
   return rows.map(normalizeWebhook);
 }
 
-export async function updateWebhookStatus(id, status, errorMessage = null) {
-  await pool.execute(
-    'UPDATE webhooks SET status = ?, error_message = ? WHERE id = ?',
-    [status, errorMessage, id]
+export async function updateWebhookStatus(
+  id,
+  status,
+  errorMessage = null,
+  processingStatus = status,
+  db = pool
+) {
+  const executor = getExecutor(db);
+
+  await executor.execute(
+    'UPDATE webhooks SET status = ?, processing_status = ?, error_message = ? WHERE id = ?',
+    [status, processingStatus, errorMessage, id]
   );
 
-  return findWebhookById(id);
+  return findWebhookById(id, executor);
 }
 
 export default {
   createWebhook,
   findWebhookById,
+  findWebhookByDeliveryId,
   listWebhooks,
   updateWebhookStatus,
 };
