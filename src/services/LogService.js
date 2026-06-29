@@ -1,4 +1,9 @@
 import { createLog } from '../models/LogModel.js';
+import { redact, safeErrorForLog } from '../utils/redact.js';
+
+function getDetails(data) {
+  return data.details ?? data.detailsJson ?? data.details_json ?? null;
+}
 
 export async function logEvent(data) {
   try {
@@ -13,10 +18,10 @@ export async function logEvent(data) {
       level: data.level ?? 'info',
       step: data.step ?? null,
       message: data.message,
-      detailsJson: data.detailsJson ?? null,
+      detailsJson: redact(getDetails(data)),
     });
   } catch (error) {
-    console.error('Logging failed:', error);
+    console.error('Logging failed:', safeErrorForLog(error));
     return null;
   }
 }
