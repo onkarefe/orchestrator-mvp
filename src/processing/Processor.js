@@ -81,7 +81,7 @@ export async function processJobToZip({ order, job }) {
   const panelPixelWidths = buildPanelPixelWidths(safeCrop.width, panelInfo.panelCount);
   const panelFiles = [];
   const fileEntries = [];
-  const pageWidthMm = widthMm / panelInfo.panelCount;
+  const pageWidthMm = panelInfo.panelWidthCm * 10;
   const tempJobDir = path.join(tmpDir, `job-${job.id}`);
   const artifactDir = path.join(artifactsDir, `job-${job.id}`);
   const zipFileName = `w-${shopifyOrderId}.zip`;
@@ -109,7 +109,12 @@ export async function processJobToZip({ order, job }) {
       outputPath: tempPanelPath,
     });
 
-    panelFiles.push(panelFileName);
+    panelFiles.push({
+      fileName: panelFileName,
+      widthMm: pageWidthMm,
+      heightMm,
+    });
+
     fileEntries.push({
       name: panelFileName,
       filePath: tempPanelPath,
@@ -120,6 +125,7 @@ export async function processJobToZip({ order, job }) {
 
   const xmlFileName = `w-${shopifyOrderId}.xml`;
   const xmlTempPath = path.join(tempJobDir, xmlFileName);
+
   await fs.writeFile(
     xmlTempPath,
     buildOrderXml({

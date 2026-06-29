@@ -23,6 +23,20 @@ function parseJsonIfNeeded(value) {
   }
 }
 
+function formatMm(value) {
+  const numberValue = Number(value);
+
+  if (!Number.isFinite(numberValue)) {
+    return '';
+  }
+
+  if (Number.isInteger(numberValue)) {
+    return String(numberValue);
+  }
+
+  return String(Number(numberValue.toFixed(3)));
+}
+
 function getCustomerFullName(rawPayload) {
   const firstName = rawPayload?.customer?.first_name ?? '';
   const lastName = rawPayload?.customer?.last_name ?? '';
@@ -91,17 +105,98 @@ function getSku(rawPayload, job) {
   return lineItem?.sku || 'MISSING-SKU';
 }
 
+function normalizePanelFiles(panelFiles, job) {
+  if (!Array.isArray(panelFiles)) {
+    return [];
+  }
+
+  return panelFiles
+    .map((panelFile) => {
+      if (!panelFile) {
+        return null;
+      }
+
+      if (typeof panelFile === 'string') {
+        return {
+          fileName: panelFile,
+          widthMm: Number(job?.width_mm),
+          heightMm: Number(job?.height_mm),
+        };
+      }
+
+      return {
+        fileName: panelFile.fileName,
+        widthMm: Number(panelFile.widthMm),
+        heightMm: Number(panelFile.heightMm),
+      };
+    })
+    .filter((panelFile) => panelFile?.fileName);
+}
+
+function groupPanelFilesByDimensions(panelFiles) {
+  const groups = [];
+
+  for (const panelFile of panelFiles) {
+    const widthMm = Number(panelFile.widthMm);
+    const heightMm = Number(panelFile.heightMm);
+
+    const lastGroup = groups[groups.length - 1];
+    const sameAsLast =
+      lastGroup &&
+      Math.abs(lastGroup.widthMm - widthMm) < 0.000001 &&
+      Math.abs(lastGroup.heightMm - heightMm) < 0.000001;
+
+    if (sameAsLast) {
+      lastGroup.files.push(panelFile.fileName);
+      continue;
+    }
+
+    groups.push({
+      widthMm,
+      heightMm,
+      files: [panelFile.fileName],
+    });
+  }
+
+  return groups;
+}
+
+function buildPositionsXml(rawPayload, job, panelFiles) {
+  const sku = getSku(rawPayload, job);
+  const normalizedPanelFiles = normalizePanelFiles(panelFiles, job);
+  const groupedPositions = groupPanelFilesByDimensions(normalizedPanelFiles);
+
+  return groupedPositions
+    .map((position) => {
+      const fileItems = position.files
+        .map(
+          (fileName) =>
+            `        <file type="ftp">${xmlEscape(fileName)}</file>`
+        )
+        .join('\n');
+
+      return `    <position>
+      <sku>${xmlEscape(sku)}</sku>
+      <width unit="mm">${xmlEscape(formatMm(position.widthMm))}</width>
+      <height unit="mm">${xmlEscape(formatMm(position.heightMm))}</height>
+      <variants>${xmlEscape(position.files.length)}</variants>
+      <copies_per_variant>1</copies_per_variant>
+      <files>
+${fileItems}
+      </files>
+    </position>`;
+    })
+    .join('\n');
+}
+
 export function buildOrderXml({ order, job, shopifyOrderId, panelFiles }) {
   const rawPayload = parseJsonIfNeeded(order?.raw_payload_json) ?? {};
-  const files = Array.isArray(panelFiles) ? panelFiles : [];
   const shippingFrom = getShippingFrom();
   const shippingTo = getShippingTo(rawPayload);
   const reference =
     rawPayload.name || order?.shopify_order_number || shopifyOrderId;
 
-  const fileItems = files
-    .map((fileName) => `        <file type="ftp">${xmlEscape(fileName)}</file>`)
-    .join('\n');
+  const positionsXml = buildPositionsXml(rawPayload, job, panelFiles);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <root>
@@ -128,16 +223,7 @@ export function buildOrderXml({ order, job, shopifyOrderId, panelFiles }) {
     </shipping_to>
   </order>
   <positions>
-    <position>
-      <sku>${xmlEscape(getSku(rawPayload, job))}</sku>
-      <width unit="mm">${xmlEscape(job?.width_mm)}</width>
-      <height unit="mm">${xmlEscape(job?.height_mm)}</height>
-      <variants>1</variants>
-      <copies_per_variant>1</copies_per_variant>
-      <files>
-${fileItems}
-      </files>
-    </position>
+${positionsXml}
   </positions>
 </root>`;
 }
