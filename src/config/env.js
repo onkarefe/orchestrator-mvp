@@ -44,6 +44,8 @@ const env = {
   DB_PASSWORD: process.env.DB_PASSWORD ?? '',
   DB_NAME: process.env.DB_NAME || 'orchestrator_mvp',
   MASTER_STORAGE_DIR: process.env.MASTER_STORAGE_DIR || 'storage/masters',
+  ADMIN_ACCESS_ENABLED: booleanFromEnv('ADMIN_ACCESS_ENABLED', true),
+  ADMIN_ACCESS_TOKEN: process.env.ADMIN_ACCESS_TOKEN ?? '',
   SHOPIFY_WEBHOOK_HMAC_REQUIRED: booleanFromEnv(
     'SHOPIFY_WEBHOOK_HMAC_REQUIRED',
     true

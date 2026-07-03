@@ -8,8 +8,11 @@ import OrderController from '../controllers/admin/OrderController.js';
 import ShopifyUpdateTaskController from '../controllers/admin/ShopifyUpdateTaskController.js';
 import WebhookController from '../controllers/admin/WebhookController.js';
 import ArtifactDownloadController from '../controllers/download/ArtifactDownloadController.js';
+import requireAdminAccess from '../middleware/adminAccess.js';
 
 const router = Router();
+
+router.use('/admin', requireAdminAccess);
 
 router.get('/admin', DashboardController.index);
 router.get('/admin/orders', OrderController.index);
