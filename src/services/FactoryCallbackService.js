@@ -20,6 +20,7 @@ import {
 import { redact } from '../utils/redact.js';
 import { canTransition } from './statusTransition.js';
 import { logInfo, logWarning } from './LogService.js';
+import { ensureShopifyUpdateTaskDryRun } from './ShopifyUpdateTaskService.js';
 
 const MAX_IDENTIFIER_LENGTH = 191;
 const MAX_STATUS_LENGTH = 100;
@@ -41,12 +42,6 @@ const FACTORY_STATUS_TO_ORDER_STATUS = Object.freeze({
   shipped: ORDER_STATUSES.SHIPPED,
   failed: ORDER_STATUSES.MANUAL_REVIEW,
 });
-
-const SHOPIFY_UPDATE_RELEVANT_FACTORY_STATUSES = new Set([
-  'produced',
-  'shipped',
-  'failed',
-]);
 
 const FACTORY_CALLBACK_READY_ORDER_STATUSES = new Set([
   ORDER_STATUSES.COMPLETED,
@@ -684,8 +679,12 @@ export async function receiveFactoryCallback({ payload, headers }) {
       orderId: order.id,
     }
   );
-  const shopifyUpdateSuppressed =
-    SHOPIFY_UPDATE_RELEVANT_FACTORY_STATUSES.has(normalized.status);
+  const shopifyUpdateTaskResult = await ensureShopifyUpdateTaskDryRun({
+    order: updatedOrder,
+    factoryCallback: updatedCallback,
+    factoryStatus: normalized.status,
+    factoryPayload: payload,
+  });
 
   await logInfo({
     scopeType: 'order',
@@ -699,7 +698,11 @@ export async function receiveFactoryCallback({ payload, headers }) {
       orderStatus: updatedOrder.status,
       factoryOrderId: updatedOrder.factory_order_id,
       deliveryId: normalized.deliveryId,
-      shopifyUpdateSuppressed,
+      shopifyUpdateTaskId: shopifyUpdateTaskResult.task?.id ?? null,
+      shopifyUpdateTaskCreated: shopifyUpdateTaskResult.created,
+      shopifyUpdateTaskType:
+        shopifyUpdateTaskResult.task?.task_type ?? null,
+      shopifyUpdateSuppressed: Boolean(shopifyUpdateTaskResult.task),
     },
   });
 
@@ -713,7 +716,11 @@ export async function receiveFactoryCallback({ payload, headers }) {
       orderUpdated: true,
       factoryStatus: updatedOrder.factory_status,
       orderStatus: updatedOrder.status,
-      shopifyUpdateSuppressed,
+      shopifyUpdateTaskId: shopifyUpdateTaskResult.task?.id ?? null,
+      shopifyUpdateTaskCreated: shopifyUpdateTaskResult.created,
+      shopifyUpdateTaskType:
+        shopifyUpdateTaskResult.task?.task_type ?? null,
+      shopifyUpdateSuppressed: Boolean(shopifyUpdateTaskResult.task),
     },
   };
 }
