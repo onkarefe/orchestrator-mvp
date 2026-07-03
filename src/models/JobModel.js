@@ -1,4 +1,5 @@
 import pool from '../db/connection.js';
+import { JOB_STATUSES } from '../constants/statuses.js';
 
 function jsonForWrite(value) {
   if (value === undefined || value === null) {
@@ -44,6 +45,19 @@ function normalizeJob(row) {
 
 function getExecutor(db) {
   return db ?? pool;
+}
+
+function normalizeClaimOptions({ workerId, maxAttempts } = {}) {
+  const normalizedWorkerId = String(workerId ?? '').trim().slice(0, 191);
+  const parsedMaxAttempts = Number.parseInt(maxAttempts, 10);
+
+  return {
+    workerId: normalizedWorkerId || 'unknown-worker',
+    maxAttempts:
+      Number.isFinite(parsedMaxAttempts) && parsedMaxAttempts > 0
+        ? parsedMaxAttempts
+        : 3,
+  };
 }
 
 export async function createJob(data, db = pool) {
@@ -156,6 +170,100 @@ export async function listJobs({ status, orderId, limit, offset } = {}) {
   return rows.map(normalizeJob);
 }
 
+export async function claimNextPendingJob(options = {}) {
+  const { workerId, maxAttempts } = normalizeClaimOptions(options);
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [rows] = await connection.execute(
+      `SELECT * FROM jobs
+      WHERE status = ?
+        AND COALESCE(attempt_count, 0) < COALESCE(max_attempts, ?)
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
+      FOR UPDATE`,
+      [JOB_STATUSES.PENDING, maxAttempts]
+    );
+
+    const candidate = rows[0];
+
+    if (!candidate) {
+      await connection.commit();
+      return null;
+    }
+
+    const [result] = await connection.execute(
+      `UPDATE jobs
+      SET status = ?,
+        attempt_count = COALESCE(attempt_count, 0) + 1,
+        max_attempts = COALESCE(max_attempts, ?),
+        locked_at = CURRENT_TIMESTAMP,
+        locked_by = ?,
+        started_at = CURRENT_TIMESTAMP,
+        last_error = NULL
+      WHERE id = ?
+        AND status = ?
+        AND COALESCE(attempt_count, 0) < COALESCE(max_attempts, ?)`,
+      [
+        JOB_STATUSES.PROCESSING,
+        maxAttempts,
+        workerId,
+        candidate.id,
+        JOB_STATUSES.PENDING,
+        maxAttempts,
+      ]
+    );
+
+    if (result.affectedRows !== 1) {
+      await connection.rollback();
+      return null;
+    }
+
+    const claimedJob = await findJobById(candidate.id, connection);
+
+    await connection.commit();
+    return claimedJob;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+export async function claimPendingJobById(id, options = {}) {
+  const { workerId, maxAttempts } = normalizeClaimOptions(options);
+  const [result] = await pool.execute(
+    `UPDATE jobs
+    SET status = ?,
+      attempt_count = COALESCE(attempt_count, 0) + 1,
+      max_attempts = COALESCE(max_attempts, ?),
+      locked_at = CURRENT_TIMESTAMP,
+      locked_by = ?,
+      started_at = CURRENT_TIMESTAMP,
+      last_error = NULL
+    WHERE id = ?
+      AND status = ?
+      AND COALESCE(attempt_count, 0) < COALESCE(max_attempts, ?)`,
+    [
+      JOB_STATUSES.PROCESSING,
+      maxAttempts,
+      workerId,
+      id,
+      JOB_STATUSES.PENDING,
+      maxAttempts,
+    ]
+  );
+
+  if (result.affectedRows !== 1) {
+    return null;
+  }
+
+  return findJobById(id);
+}
+
 export async function updateJobStatus(id, status) {
   await pool.execute('UPDATE jobs SET status = ? WHERE id = ?', [status, id]);
 
@@ -180,7 +288,7 @@ export async function updateJobManualReview(
 export async function markJobProcessing(id) {
   await pool.execute(
     'UPDATE jobs SET status = ?, started_at = CURRENT_TIMESTAMP WHERE id = ?',
-    ['processing', id]
+    [JOB_STATUSES.PROCESSING, id]
   );
 
   return findJobById(id);
@@ -188,8 +296,13 @@ export async function markJobProcessing(id) {
 
 export async function markJobCompleted(id) {
   await pool.execute(
-    'UPDATE jobs SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?',
-    ['completed', id]
+    `UPDATE jobs
+    SET status = ?,
+      locked_at = NULL,
+      locked_by = NULL,
+      completed_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
+    [JOB_STATUSES.COMPLETED, id]
   );
 
   return findJobById(id);
@@ -203,9 +316,11 @@ export async function markJobCompletedWithArtifactManifest(
     `UPDATE jobs
     SET status = ?,
       artifact_manifest_path = ?,
+      locked_at = NULL,
+      locked_by = NULL,
       completed_at = CURRENT_TIMESTAMP
     WHERE id = ?`,
-    ['completed', artifactManifestPath, id]
+    [JOB_STATUSES.COMPLETED, artifactManifestPath, id]
   );
 
   return findJobById(id);
@@ -213,8 +328,28 @@ export async function markJobCompletedWithArtifactManifest(
 
 export async function markJobFailed(id, errorMessage) {
   await pool.execute(
-    'UPDATE jobs SET status = ?, last_error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?',
-    ['failed', errorMessage, id]
+    `UPDATE jobs
+    SET status = ?,
+      last_error = ?,
+      locked_at = NULL,
+      locked_by = NULL,
+      completed_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
+    [JOB_STATUSES.FAILED, errorMessage, id]
+  );
+
+  return findJobById(id);
+}
+
+export async function markJobPendingForRetry(id, errorMessage) {
+  await pool.execute(
+    `UPDATE jobs
+    SET status = ?,
+      last_error = ?,
+      locked_at = NULL,
+      locked_by = NULL
+    WHERE id = ?`,
+    [JOB_STATUSES.PENDING, errorMessage, id]
   );
 
   return findJobById(id);
@@ -226,16 +361,82 @@ export async function incrementJobAttempt(id) {
   return findJobById(id);
 }
 
+export async function releaseStaleProcessingJobs({
+  staleLockMinutes,
+  maxAttempts,
+  retryErrorMessage = 'stale_lock_released',
+  finalErrorMessage = 'stale_processing_lock_max_attempts_exceeded',
+} = {}) {
+  const parsedStaleLockMinutes = Number.parseInt(staleLockMinutes, 10);
+  const parsedMaxAttempts = Number.parseInt(maxAttempts, 10);
+  const safeStaleLockMinutes =
+    Number.isFinite(parsedStaleLockMinutes) && parsedStaleLockMinutes > 0
+      ? parsedStaleLockMinutes
+      : 30;
+  const safeMaxAttempts =
+    Number.isFinite(parsedMaxAttempts) && parsedMaxAttempts > 0
+      ? parsedMaxAttempts
+      : 3;
+
+  const [requeuedResult] = await pool.execute(
+    `UPDATE jobs
+    SET status = ?,
+      last_error = ?,
+      locked_at = NULL,
+      locked_by = NULL
+    WHERE status = ?
+      AND locked_at IS NOT NULL
+      AND locked_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ? MINUTE)
+      AND COALESCE(attempt_count, 0) < COALESCE(max_attempts, ?)`,
+    [
+      JOB_STATUSES.PENDING,
+      retryErrorMessage,
+      JOB_STATUSES.PROCESSING,
+      safeStaleLockMinutes,
+      safeMaxAttempts,
+    ]
+  );
+
+  const [failedResult] = await pool.execute(
+    `UPDATE jobs
+    SET status = ?,
+      last_error = ?,
+      locked_at = NULL,
+      locked_by = NULL,
+      completed_at = CURRENT_TIMESTAMP
+    WHERE status = ?
+      AND locked_at IS NOT NULL
+      AND locked_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ? MINUTE)
+      AND COALESCE(attempt_count, 0) >= COALESCE(max_attempts, ?)`,
+    [
+      JOB_STATUSES.FAILED,
+      finalErrorMessage,
+      JOB_STATUSES.PROCESSING,
+      safeStaleLockMinutes,
+      safeMaxAttempts,
+    ]
+  );
+
+  return {
+    requeued: requeuedResult.affectedRows,
+    failed: failedResult.affectedRows,
+  };
+}
+
 export default {
   createJob,
   findJobById,
   findJobByShopifyOrderAndLineItem,
   listJobs,
+  claimNextPendingJob,
+  claimPendingJobById,
   updateJobStatus,
   updateJobManualReview,
   markJobProcessing,
   markJobCompleted,
   markJobCompletedWithArtifactManifest,
   markJobFailed,
+  markJobPendingForRetry,
   incrementJobAttempt,
+  releaseStaleProcessingJobs,
 };
