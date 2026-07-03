@@ -114,6 +114,39 @@ export async function findWebhookByDeliveryId(deliveryId, db = pool) {
   return normalizeWebhook(rows[0]);
 }
 
+export async function findOriginalWebhookByShopifyOrderId(
+  shopifyOrderId,
+  excludeId = null,
+  db = pool
+) {
+  if (
+    shopifyOrderId === null ||
+    shopifyOrderId === undefined ||
+    shopifyOrderId === ''
+  ) {
+    return null;
+  }
+
+  const executor = getExecutor(db);
+  const params = [shopifyOrderId];
+  let excludeSql = '';
+
+  if (excludeId !== null && excludeId !== undefined && excludeId !== '') {
+    excludeSql = ' AND id <> ?';
+    params.push(excludeId);
+  }
+
+  const [rows] = await executor.execute(
+    `SELECT * FROM webhooks
+    WHERE shopify_order_id = ?${excludeSql}
+    ORDER BY id ASC
+    LIMIT 1`,
+    params
+  );
+
+  return normalizeWebhook(rows[0]);
+}
+
 export async function listWebhooks({ status, limit, offset } = {}) {
   const params = [];
   const conditions = [];
@@ -151,10 +184,37 @@ export async function updateWebhookStatus(
   return findWebhookById(id, executor);
 }
 
+export async function updateWebhookDuplicate(
+  id,
+  {
+    status = 'duplicate',
+    processingStatus = 'duplicate',
+    duplicateOfId = null,
+    errorMessage = null,
+  } = {},
+  db = pool
+) {
+  const executor = getExecutor(db);
+
+  await executor.execute(
+    `UPDATE webhooks
+    SET status = ?,
+      processing_status = ?,
+      duplicate_of_id = ?,
+      error_message = ?
+    WHERE id = ?`,
+    [status, processingStatus, duplicateOfId, errorMessage, id]
+  );
+
+  return findWebhookById(id, executor);
+}
+
 export default {
   createWebhook,
   findWebhookById,
   findWebhookByDeliveryId,
+  findOriginalWebhookByShopifyOrderId,
   listWebhooks,
   updateWebhookStatus,
+  updateWebhookDuplicate,
 };

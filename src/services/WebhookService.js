@@ -2,7 +2,9 @@ import {
   createWebhook,
   findWebhookByDeliveryId,
   findWebhookById,
+  findOriginalWebhookByShopifyOrderId,
   listWebhooks,
+  updateWebhookDuplicate,
   updateWebhookStatus,
 } from '../models/WebhookModel.js';
 import { WEBHOOK_PROCESSING_STATUSES } from '../constants/statuses.js';
@@ -72,6 +74,33 @@ export async function markWebhookFailed(id, errorMessage) {
   return webhook;
 }
 
+export async function markWebhookDuplicate(
+  id,
+  duplicateOfId = null,
+  errorMessage = 'Duplicate Shopify order webhook'
+) {
+  const webhook = await updateWebhookDuplicate(id, {
+    status: WEBHOOK_PROCESSING_STATUSES.DUPLICATE,
+    processingStatus: WEBHOOK_PROCESSING_STATUSES.DUPLICATE,
+    duplicateOfId,
+    errorMessage,
+  });
+
+  await logInfo({
+    scopeType: 'system',
+    step: 'webhook.duplicate',
+    message: 'Webhook marked duplicate',
+    detailsJson: {
+      webhookId: id,
+      duplicateOfId,
+      shopifyOrderId: webhook.shopify_order_id,
+      deliveryId: webhook.delivery_id,
+    },
+  });
+
+  return webhook;
+}
+
 export async function processWebhookOrder(webhookId) {
   const webhook = await findWebhookById(webhookId);
 
@@ -82,6 +111,24 @@ export async function processWebhookOrder(webhookId) {
   const orderResult = await createOrderAndJobsFromShopifyPayload(
     webhook.raw_payload_json
   );
+
+  if (orderResult.duplicate) {
+    const originalWebhook = await findOriginalWebhookByShopifyOrderId(
+      webhook.shopify_order_id,
+      webhook.id
+    );
+    const duplicateWebhook = await markWebhookDuplicate(
+      webhookId,
+      originalWebhook?.id ?? null
+    );
+
+    return {
+      webhook: duplicateWebhook,
+      duplicateOfId: originalWebhook?.id ?? null,
+      ...orderResult,
+    };
+  }
+
   const processedWebhook = await markWebhookProcessed(webhookId);
 
   return {
@@ -106,6 +153,7 @@ export default {
   recordWebhook,
   markWebhookProcessed,
   markWebhookFailed,
+  markWebhookDuplicate,
   processWebhookOrder,
   getWebhookByDeliveryId,
   getWebhook,
