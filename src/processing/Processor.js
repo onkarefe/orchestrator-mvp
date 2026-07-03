@@ -1,8 +1,9 @@
+import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { artifactsDir, tmpDir } from '../config/paths.js';
 import { calculateSafeCrop, getImageMetadata } from './image.js';
+import { createJobWorkspace, sanitizePathSegment } from './jobWorkspace.js';
 import { resolveMasterPath } from './masterResolver.js';
 import { buildPanelPixelWidths, computePanelsFromOutputMm } from './panels.js';
 import { createPanelPdfFile } from './pdf.js';
@@ -47,6 +48,20 @@ function getShopifyOrderId(order) {
   return String(shopifyOrderId);
 }
 
+async function moveFileWithoutOverwrite(sourcePath, destinationPath) {
+  try {
+    await fs.copyFile(sourcePath, destinationPath, fsConstants.COPYFILE_EXCL);
+  } catch (error) {
+    if (error.code === 'EEXIST') {
+      throw new Error(`Artifact already exists: ${destinationPath}`);
+    }
+
+    throw error;
+  }
+
+  await fs.unlink(sourcePath);
+}
+
 function validateJob(job) {
   if (!job?.id) {
     throw new Error('job.id is required');
@@ -74,6 +89,10 @@ function validateJob(job) {
 export async function processJobToZip({ order, job }) {
   const { widthMm, heightMm, cropRatio } = validateJob(job);
   const shopifyOrderId = getShopifyOrderId(order);
+  const safeShopifyOrderId = sanitizePathSegment(
+    shopifyOrderId,
+    'shopify-order'
+  );
   const masterPath = resolveMasterPath(job.master_asset_id);
   const panelInfo = computePanelsFromOutputMm(widthMm);
   const metadata = await getImageMetadata(masterPath);
@@ -82,18 +101,18 @@ export async function processJobToZip({ order, job }) {
   const panelFiles = [];
   const fileEntries = [];
   const pageWidthMm = panelInfo.panelWidthCm * 10;
-  const tempJobDir = path.join(tmpDir, `job-${job.id}`);
-  const artifactDir = path.join(artifactsDir, `job-${job.id}`);
-  const zipFileName = `w-${shopifyOrderId}.zip`;
-  const zipPath = path.join(artifactDir, zipFileName);
+  const workspace = await createJobWorkspace({
+    orderId: order.id,
+    jobId: job.id,
+    shopifyOrderId,
+    attemptCount: job.attempt_count,
+  });
   let panelLeft = safeCrop.left;
-
-  await fs.mkdir(tempJobDir, { recursive: true });
 
   for (let index = 0; index < panelPixelWidths.length; index += 1) {
     const panelNumber = String(index + 1).padStart(2, '0');
-    const panelFileName = `w-${shopifyOrderId}-${panelNumber}.pdf`;
-    const tempPanelPath = path.join(tempJobDir, panelFileName);
+    const panelFileName = `w-${safeShopifyOrderId}-${panelNumber}.pdf`;
+    const tempPanelPath = path.join(workspace.panelsDir, panelFileName);
     const panelCrop = {
       left: panelLeft,
       top: safeCrop.top,
@@ -123,8 +142,8 @@ export async function processJobToZip({ order, job }) {
     panelLeft += panelPixelWidths[index];
   }
 
-  const xmlFileName = `w-${shopifyOrderId}.xml`;
-  const xmlTempPath = path.join(tempJobDir, xmlFileName);
+  const xmlFileName = `w-${safeShopifyOrderId}.xml`;
+  const xmlTempPath = path.join(workspace.workDir, xmlFileName);
 
   await fs.writeFile(
     xmlTempPath,
@@ -146,15 +165,17 @@ export async function processJobToZip({ order, job }) {
     filePath: xmlTempPath,
   });
 
-  await createZipFromFileEntries(zipPath, fileEntries);
-  await fs.rm(tempJobDir, { recursive: true, force: true });
+  await createZipFromFileEntries(workspace.workZipPath, fileEntries);
+  await moveFileWithoutOverwrite(workspace.workZipPath, workspace.finalZipPath);
 
   return {
-    zipPath,
-    zipFileName,
+    zipPath: workspace.finalZipPath,
+    zipFileName: workspace.zipFileName,
     panelFiles,
     panelInfo,
-    artifactDir,
+    artifactDir: workspace.finalDir,
+    workDir: workspace.workDir,
+    runId: workspace.runId,
   };
 }
 
