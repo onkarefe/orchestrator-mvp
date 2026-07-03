@@ -90,6 +90,24 @@ export async function findOrderByShopifyOrderId(shopifyOrderId, db = pool) {
   return normalizeOrder(rows[0]);
 }
 
+export async function findOrderByFactoryOrderId(factoryOrderId, db = pool) {
+  if (
+    factoryOrderId === null ||
+    factoryOrderId === undefined ||
+    factoryOrderId === ''
+  ) {
+    return null;
+  }
+
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
+    'SELECT * FROM orders WHERE factory_order_id = ? LIMIT 1',
+    [factoryOrderId]
+  );
+
+  return normalizeOrder(rows[0]);
+}
+
 export async function listOrders({ status, limit, offset } = {}) {
   const params = [];
   const conditions = [];
@@ -118,6 +136,58 @@ export async function updateOrderStatus(id, status, db = pool) {
   return findOrderById(id, executor);
 }
 
+export async function updateOrderFactoryState(id, data = {}, db = pool) {
+  const executor = getExecutor(db);
+  const updates = [];
+  const params = [];
+  const factoryStatus = data.factoryStatus ?? data.factory_status;
+  const factoryOrderId = data.factoryOrderId ?? data.factory_order_id;
+  const status = data.status;
+  const manualReviewReason =
+    data.manualReviewReason ?? data.manual_review_reason;
+
+  if (factoryStatus !== undefined) {
+    updates.push('factory_status = ?');
+    params.push(factoryStatus);
+  }
+
+  if (
+    factoryOrderId !== undefined &&
+    factoryOrderId !== null &&
+    factoryOrderId !== ''
+  ) {
+    updates.push('factory_order_id = ?');
+    params.push(factoryOrderId);
+  }
+
+  if (status !== undefined && status !== null && status !== '') {
+    updates.push('status = ?');
+    params.push(status);
+  }
+
+  if (
+    manualReviewReason !== undefined &&
+    manualReviewReason !== null &&
+    manualReviewReason !== ''
+  ) {
+    updates.push('manual_review_reason = ?');
+    params.push(manualReviewReason);
+  }
+
+  if (updates.length === 0) {
+    return findOrderById(id, executor);
+  }
+
+  params.push(id);
+
+  await executor.execute(
+    `UPDATE orders SET ${updates.join(', ')} WHERE id = ?`,
+    params
+  );
+
+  return findOrderById(id, executor);
+}
+
 export async function updateOrderManualReview(
   id,
   manualReviewReason,
@@ -136,8 +206,10 @@ export async function updateOrderManualReview(
 export default {
   createOrder,
   findOrderById,
+  findOrderByFactoryOrderId,
   findOrderByShopifyOrderId,
   listOrders,
+  updateOrderFactoryState,
   updateOrderStatus,
   updateOrderManualReview,
 };
