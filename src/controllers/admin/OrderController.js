@@ -1,6 +1,7 @@
 import { listJobs } from '../../models/JobModel.js';
 import { listLogs } from '../../models/LogModel.js';
 import { findOrderById, listOrders } from '../../models/OrderModel.js';
+import { redact } from '../../utils/redact.js';
 
 function prettyJson(value) {
   if (value === null || value === undefined) {
@@ -9,13 +10,13 @@ function prettyJson(value) {
 
   if (typeof value === 'string') {
     try {
-      return JSON.stringify(JSON.parse(value), null, 2);
+      return JSON.stringify(redact(JSON.parse(value)), null, 2);
     } catch {
-      return value;
+      return '[unparseable_json_string]';
     }
   }
 
-  return JSON.stringify(value, null, 2);
+  return JSON.stringify(redact(value), null, 2);
 }
 
 function renderPage(res, next, view, data) {

@@ -32,16 +32,20 @@
             <th scope="col">Provider</th>
             <th scope="col">Topic</th>
             <th scope="col">Shopify order</th>
+            <th scope="col">Delivery</th>
             <th scope="col">Status</th>
+            <th scope="col">Processing</th>
             <th scope="col">HMAC</th>
-            <th scope="col">Received</th>
+            <th scope="col">Duplicate of</th>
+            <th scope="col">Error</th>
+            <th scope="col">Created</th>
             <th scope="col" class="table-action">Action</th>
           </tr>
         </thead>
         <tbody>
           <% if (webhooks.length === 0) { %>
             <tr>
-              <td class="empty-state" colspan="8">No webhooks recorded yet.</td>
+              <td class="empty-state" colspan="11">No webhooks recorded yet.</td>
             </tr>
           <% } %>
           <% webhooks.forEach((webhook) => { %>
@@ -50,9 +54,13 @@
               <td><%= display(webhook.provider) %></td>
               <td class="mono"><%= display(webhook.topic) %></td>
               <td class="mono"><%= display(webhook.shopify_order_id) %></td>
+              <td class="mono"><%= display(webhook.delivery_id) %></td>
               <td><span class="status-badge <%= statusClass(webhook.status) %>"><%= display(webhook.status) %></span></td>
+              <td><span class="status-badge <%= statusClass(webhook.processing_status) %>"><%= display(webhook.processing_status) %></span></td>
               <td><span class="status-badge status-neutral"><%= hmacLabel(webhook.hmac_valid) %></span></td>
-              <td class="table-date"><%= display(webhook.received_at) %></td>
+              <td class="mono"><%= display(webhook.duplicate_of_id) %></td>
+              <td><%= display(webhook.error_message) %></td>
+              <td class="table-date"><%= display(webhook.created_at) %></td>
               <td class="table-action">
                 <a class="button button-secondary button-small" href="/admin/webhooks/<%= webhook.id %>">Open</a>
               </td>

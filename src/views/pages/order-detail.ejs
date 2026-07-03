@@ -27,6 +27,10 @@
       </div>
       <dl class="meta-grid">
         <div class="meta-item">
+          <dt>Internal ID</dt>
+          <dd class="mono">#<%= order.id %></dd>
+        </div>
+        <div class="meta-item">
           <dt>Shopify order ID</dt>
           <dd class="mono"><%= display(order.shopify_order_id) %></dd>
         </div>
@@ -41,6 +45,22 @@
         <div class="meta-item">
           <dt>Orchestrator status</dt>
           <dd><span class="status-badge <%= statusClass(order.status) %>"><%= display(order.status) %></span></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Manual review reason</dt>
+          <dd><%= display(order.manual_review_reason) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Last error</dt>
+          <dd><%= display(order.last_error) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Factory status</dt>
+          <dd><%= display(order.factory_status) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Factory order ID</dt>
+          <dd class="mono"><%= display(order.factory_order_id) %></dd>
         </div>
         <div class="meta-item">
           <dt>Created</dt>
@@ -85,24 +105,30 @@
         <thead>
           <tr>
             <th scope="col">Job</th>
+            <th scope="col">Line item</th>
             <th scope="col">Product</th>
             <th scope="col">SKU</th>
             <th scope="col">Status</th>
+            <th scope="col">Attempts</th>
+            <th scope="col">Manual review</th>
             <th scope="col" class="table-action">Action</th>
           </tr>
         </thead>
         <tbody>
           <% if (jobs.length === 0) { %>
             <tr>
-              <td class="empty-state" colspan="5">No jobs found for this order.</td>
+              <td class="empty-state" colspan="8">No jobs found for this order.</td>
             </tr>
           <% } %>
           <% jobs.forEach((job) => { %>
             <tr>
               <td class="mono">#<%= job.id %></td>
+              <td class="mono"><%= display(job.shopify_line_item_id) %></td>
               <td><%= display(job.product_title) %></td>
               <td class="mono"><%= display(job.sku) %></td>
               <td><span class="status-badge <%= statusClass(job.status) %>"><%= display(job.status) %></span></td>
+              <td><%= display(job.attempt_count) %> / <%= display(job.max_attempts) %></td>
+              <td><%= display(job.manual_review_reason) %></td>
               <td class="table-action">
                 <a class="button button-secondary button-small" href="/admin/jobs/<%= job.id %>">Open</a>
               </td>

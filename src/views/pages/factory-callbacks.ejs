@@ -1,0 +1,81 @@
+<%
+  const display = (value) =>
+    value === null || value === undefined || value === '' ? '-' : value;
+  const statusClass = (value) =>
+    `status-${String(value || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const booleanLabel = (value) => {
+    if (value === null || value === undefined) return 'Not checked';
+    return value ? 'Valid' : 'Invalid';
+  };
+%>
+<section class="page">
+  <header class="page-header">
+    <div>
+      <p class="eyebrow">Factory</p>
+      <h1>Factory callbacks</h1>
+      <p class="page-description">Recent simulated factory/NEXO callback attempts.</p>
+    </div>
+  </header>
+
+  <section class="table-card">
+    <div class="table-card-header">
+      <div>
+        <h2>Callback records</h2>
+        <p class="muted"><%= factoryCallbacks.length %> recent callback<%= factoryCallbacks.length === 1 ? '' : 's' %></p>
+      </div>
+    </div>
+
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">ID</th>
+            <th scope="col">Order</th>
+            <th scope="col">Shopify order</th>
+            <th scope="col">Factory order</th>
+            <th scope="col">Delivery</th>
+            <th scope="col">Factory status</th>
+            <th scope="col">Auth</th>
+            <th scope="col">Duplicate of</th>
+            <th scope="col">Processing</th>
+            <th scope="col">Error</th>
+            <th scope="col">Created</th>
+            <th scope="col" class="table-action">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (factoryCallbacks.length === 0) { %>
+            <tr>
+              <td class="empty-state" colspan="12">No factory callbacks recorded yet.</td>
+            </tr>
+          <% } %>
+
+          <% factoryCallbacks.forEach((factoryCallback) => { %>
+            <tr>
+              <td><a class="primary-link mono" href="/admin/factory-callbacks/<%= factoryCallback.id %>">#<%= factoryCallback.id %></a></td>
+              <td class="mono">
+                <% if (factoryCallback.order_id) { %>
+                  <a class="secondary-link mono" href="/admin/orders/<%= factoryCallback.order_id %>">#<%= factoryCallback.order_id %></a>
+                <% } else { %>
+                  -
+                <% } %>
+              </td>
+              <td class="mono"><%= display(factoryCallback.shopify_order_id) %></td>
+              <td class="mono"><%= display(factoryCallback.factory_order_id) %></td>
+              <td class="mono"><%= display(factoryCallback.delivery_id) %></td>
+              <td><span class="status-badge <%= statusClass(factoryCallback.status) %>"><%= display(factoryCallback.status) %></span></td>
+              <td><span class="status-badge status-neutral"><%= booleanLabel(factoryCallback.auth_valid) %></span></td>
+              <td class="mono"><%= display(factoryCallback.duplicate_of_id) %></td>
+              <td><span class="status-badge <%= statusClass(factoryCallback.processing_status) %>"><%= display(factoryCallback.processing_status) %></span></td>
+              <td><%= display(factoryCallback.error_message) %></td>
+              <td class="table-date"><%= display(factoryCallback.created_at) %></td>
+              <td class="table-action">
+                <a class="button button-secondary button-small" href="/admin/factory-callbacks/<%= factoryCallback.id %>">Open</a>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</section>

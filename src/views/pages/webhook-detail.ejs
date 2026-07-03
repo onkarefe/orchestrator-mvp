@@ -42,12 +42,36 @@
         <dd class="mono"><%= display(webhook.shopify_order_id) %></dd>
       </div>
       <div class="meta-item">
+        <dt>Delivery ID</dt>
+        <dd class="mono"><%= display(webhook.delivery_id) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Status</dt>
+        <dd><span class="status-badge <%= statusClass(webhook.status) %>"><%= display(webhook.status) %></span></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Processing status</dt>
+        <dd><span class="status-badge <%= statusClass(webhook.processing_status) %>"><%= display(webhook.processing_status) %></span></dd>
+      </div>
+      <div class="meta-item">
         <dt>HMAC</dt>
         <dd><span class="status-badge status-neutral"><%= hmacLabel(webhook.hmac_valid) %></span></dd>
       </div>
       <div class="meta-item">
+        <dt>Duplicate of</dt>
+        <dd class="mono"><%= display(webhook.duplicate_of_id) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Error message</dt>
+        <dd><%= display(webhook.error_message) %></dd>
+      </div>
+      <div class="meta-item">
         <dt>Received</dt>
         <dd><%= display(webhook.received_at) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Created</dt>
+        <dd><%= display(webhook.created_at) %></dd>
       </div>
       <div class="meta-item">
         <dt>Processed</dt>

@@ -3,7 +3,10 @@
   const isOverview = currentTitle === 'Wandini Orchestrator';
   const isOrders = currentTitle === 'Orders' || currentTitle.startsWith('Order #');
   const isJobs = currentTitle === 'Jobs' || currentTitle.startsWith('Job #');
+  const isArtifacts = currentTitle === 'Artifacts' || currentTitle.startsWith('Artifact #');
   const isWebhooks = currentTitle === 'Webhook Inbox' || currentTitle.startsWith('Webhook #');
+  const isFactoryCallbacks = currentTitle === 'Factory Callbacks' || currentTitle.startsWith('Factory Callback #');
+  const isShopifyUpdateTasks = currentTitle === 'Shopify Update Tasks' || currentTitle.startsWith('Shopify Update Task #');
 %>
 <!doctype html>
 <html lang="en">
@@ -38,9 +41,21 @@
             <span class="nav-indicator" aria-hidden="true"></span>
             Jobs
           </a>
+          <a class="admin-nav-link<%= isArtifacts ? ' is-active' : '' %>" href="/admin/artifacts">
+            <span class="nav-indicator" aria-hidden="true"></span>
+            Artifacts
+          </a>
           <a class="admin-nav-link<%= isWebhooks ? ' is-active' : '' %>" href="/admin/webhooks">
             <span class="nav-indicator" aria-hidden="true"></span>
             Webhooks
+          </a>
+          <a class="admin-nav-link<%= isFactoryCallbacks ? ' is-active' : '' %>" href="/admin/factory-callbacks">
+            <span class="nav-indicator" aria-hidden="true"></span>
+            Factory callbacks
+          </a>
+          <a class="admin-nav-link<%= isShopifyUpdateTasks ? ' is-active' : '' %>" href="/admin/shopify-update-tasks">
+            <span class="nav-indicator" aria-hidden="true"></span>
+            Shopify update tasks
           </a>
         </nav>
 

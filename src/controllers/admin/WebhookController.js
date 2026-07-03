@@ -1,11 +1,20 @@
 import { getWebhook, getWebhooks } from '../../services/WebhookService.js';
+import { redact } from '../../utils/redact.js';
 
 function prettyJson(value) {
   if (value === null || value === undefined) {
     return '';
   }
 
-  return JSON.stringify(value, null, 2);
+  if (typeof value === 'string') {
+    try {
+      return JSON.stringify(redact(JSON.parse(value)), null, 2);
+    } catch {
+      return '[unparseable_json_string]';
+    }
+  }
+
+  return JSON.stringify(redact(value), null, 2);
 }
 
 function renderPage(res, next, view, data) {

@@ -25,39 +25,48 @@
       <table class="data-table">
         <thead>
           <tr>
+            <th scope="col">ID</th>
             <th scope="col">Order</th>
             <th scope="col">Shopify ID</th>
-            <th scope="col">Customer</th>
-            <th scope="col">Payment</th>
             <th scope="col">Status</th>
+            <th scope="col">Manual review</th>
+            <th scope="col">Last error</th>
+            <th scope="col">Factory</th>
             <th scope="col">Created</th>
+            <th scope="col">Updated</th>
             <th scope="col" class="table-action">Action</th>
           </tr>
         </thead>
         <tbody>
           <% if (orders.length === 0) { %>
             <tr>
-              <td class="empty-state" colspan="7">No orders recorded yet.</td>
+              <td class="empty-state" colspan="10">No orders recorded yet.</td>
             </tr>
           <% } %>
 
           <% orders.forEach((order) => { %>
             <tr>
+              <td class="mono">#<%= order.id %></td>
               <td>
                 <a class="primary-link" href="/admin/orders/<%= order.id %>">
                   <%= display(order.shopify_order_number) %>
                 </a>
-                <span class="cell-meta">Internal #<%= order.id %></span>
+                <span class="cell-meta">Order number</span>
               </td>
               <td class="mono"><%= display(order.shopify_order_id) %></td>
-              <td><%= display(order.customer_name) %></td>
-              <td><%= display(order.financial_status) %></td>
               <td>
                 <span class="status-badge <%= statusClass(order.status) %>">
                   <%= display(order.status) %>
                 </span>
               </td>
+              <td><%= display(order.manual_review_reason) %></td>
+              <td><%= display(order.last_error) %></td>
+              <td>
+                <span class="cell-title"><%= display(order.factory_status) %></span>
+                <span class="cell-meta"><%= display(order.factory_order_id) %></span>
+              </td>
               <td class="table-date"><%= display(order.created_at) %></td>
+              <td class="table-date"><%= display(order.updated_at) %></td>
               <td class="table-action">
                 <a class="button button-secondary button-small" href="/admin/orders/<%= order.id %>">Open</a>
               </td>

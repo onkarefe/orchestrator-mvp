@@ -45,6 +45,16 @@ function getExecutor(db) {
   return db ?? pool;
 }
 
+function normalizePagination(limit, offset) {
+  const parsedLimit = Number.parseInt(limit, 10);
+  const parsedOffset = Number.parseInt(offset, 10);
+
+  return {
+    limit: Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50,
+    offset: Number.isFinite(parsedOffset) && parsedOffset >= 0 ? parsedOffset : 0,
+  };
+}
+
 export async function createShopifyUpdateTask(data, db = pool) {
   const executor = getExecutor(db);
   const [result] = await executor.execute(
@@ -88,6 +98,17 @@ export async function findShopifyUpdateTaskById(id, db = pool) {
   return normalizeShopifyUpdateTask(rows[0]);
 }
 
+export async function listShopifyUpdateTasks({ limit, offset } = {}) {
+  const pagination = normalizePagination(limit, offset);
+  const [rows] = await pool.execute(
+    `SELECT * FROM shopify_update_tasks
+    ORDER BY created_at DESC
+    LIMIT ${pagination.limit} OFFSET ${pagination.offset}`
+  );
+
+  return rows.map(normalizeShopifyUpdateTask);
+}
+
 export async function findShopifyUpdateTaskByFactoryCallbackId(
   factoryCallbackId,
   db = pool
@@ -115,5 +136,6 @@ export async function findShopifyUpdateTaskByFactoryCallbackId(
 export default {
   createShopifyUpdateTask,
   findShopifyUpdateTaskById,
+  listShopifyUpdateTasks,
   findShopifyUpdateTaskByFactoryCallbackId,
 };

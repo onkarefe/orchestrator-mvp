@@ -27,18 +27,23 @@
           <tr>
             <th scope="col">Job</th>
             <th scope="col">Order</th>
-            <th scope="col">Product</th>
-            <th scope="col">Output size</th>
+            <th scope="col">Line item</th>
             <th scope="col">Status</th>
             <th scope="col">Attempts</th>
+            <th scope="col">Locked</th>
+            <th scope="col">Manual review</th>
+            <th scope="col">Last error</th>
+            <th scope="col">Manifest</th>
             <th scope="col">Created</th>
+            <th scope="col">Started</th>
+            <th scope="col">Completed</th>
             <th scope="col" class="table-action">Action</th>
           </tr>
         </thead>
         <tbody>
           <% if (jobs.length === 0) { %>
             <tr>
-              <td class="empty-state" colspan="8">No jobs recorded yet.</td>
+              <td class="empty-state" colspan="13">No jobs recorded yet.</td>
             </tr>
           <% } %>
 
@@ -55,14 +60,19 @@
                   &mdash;
                 <% } %>
               </td>
-              <td>
-                <span class="cell-title"><%= display(job.product_title) %></span>
-                <span class="cell-meta">SKU <%= display(job.sku) %></span>
-              </td>
-              <td class="mono"><%= display(job.width_mm) %> x <%= display(job.height_mm) %> mm</td>
+              <td class="mono"><%= display(job.shopify_line_item_id) %></td>
               <td><span class="status-badge <%= statusClass(job.status) %>"><%= display(job.status) %></span></td>
-              <td><%= display(job.attempt_count) %></td>
+              <td><%= display(job.attempt_count) %> / <%= display(job.max_attempts) %></td>
+              <td>
+                <span class="cell-title"><%= display(job.locked_at) %></span>
+                <span class="cell-meta"><%= display(job.locked_by) %></span>
+              </td>
+              <td><%= display(job.manual_review_reason) %></td>
+              <td><%= display(job.last_error) %></td>
+              <td class="mono"><%= display(job.artifact_manifest_path) %></td>
               <td class="table-date"><%= display(job.created_at) %></td>
+              <td class="table-date"><%= display(job.started_at) %></td>
+              <td class="table-date"><%= display(job.completed_at) %></td>
               <td class="table-action">
                 <a class="button button-secondary button-small" href="/admin/jobs/<%= job.id %>">Open</a>
               </td>

@@ -1,0 +1,96 @@
+<%
+  const display = (value) =>
+    value === null || value === undefined || value === '' ? '-' : value;
+  const statusClass = (value) =>
+    `status-${String(value || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const booleanLabel = (value) => {
+    if (value === null || value === undefined) return 'Not checked';
+    return value ? 'Valid' : 'Invalid';
+  };
+%>
+<section class="page">
+  <header class="page-header page-header-with-actions">
+    <div>
+      <a class="back-link" href="/admin/factory-callbacks">Back to factory callbacks</a>
+      <p class="eyebrow">Factory callback detail</p>
+      <h1>Factory Callback #<%= factoryCallback.id %></h1>
+      <p class="page-description"><%= display(factoryCallback.delivery_id) %></p>
+    </div>
+    <span class="status-badge status-badge-large <%= statusClass(factoryCallback.processing_status) %>">
+      <%= display(factoryCallback.processing_status) %>
+    </span>
+  </header>
+
+  <section class="card">
+    <div class="card-header">
+      <div>
+        <p class="section-label">Callback</p>
+        <h2>Delivery summary</h2>
+      </div>
+    </div>
+    <dl class="meta-grid meta-grid-three">
+      <div class="meta-item">
+        <dt>Order ID</dt>
+        <dd class="mono"><%= display(factoryCallback.order_id) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Shopify order ID</dt>
+        <dd class="mono"><%= display(factoryCallback.shopify_order_id) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Factory order ID</dt>
+        <dd class="mono"><%= display(factoryCallback.factory_order_id) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Delivery ID</dt>
+        <dd class="mono"><%= display(factoryCallback.delivery_id) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Factory status</dt>
+        <dd><span class="status-badge <%= statusClass(factoryCallback.status) %>"><%= display(factoryCallback.status) %></span></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Auth valid</dt>
+        <dd><span class="status-badge status-neutral"><%= booleanLabel(factoryCallback.auth_valid) %></span></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Duplicate of</dt>
+        <dd class="mono"><%= display(factoryCallback.duplicate_of_id) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Processing status</dt>
+        <dd><span class="status-badge <%= statusClass(factoryCallback.processing_status) %>"><%= display(factoryCallback.processing_status) %></span></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Error message</dt>
+        <dd><%= display(factoryCallback.error_message) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Created</dt>
+        <dd><%= display(factoryCallback.created_at) %></dd>
+      </div>
+    </dl>
+  </section>
+
+  <details class="card disclosure">
+    <summary>
+      <span>
+        <span class="section-label">Request metadata</span>
+        <strong>Redacted headers</strong>
+      </span>
+      <span class="disclosure-hint">Show headers</span>
+    </summary>
+    <pre class="code-panel"><%= headersJson || '{}' %></pre>
+  </details>
+
+  <details class="card disclosure">
+    <summary>
+      <span>
+        <span class="section-label">Technical data</span>
+        <strong>Redacted payload</strong>
+      </span>
+      <span class="disclosure-hint">Show payload</span>
+    </summary>
+    <pre class="code-panel"><%= rawPayloadJson || '{}' %></pre>
+  </details>
+</section>

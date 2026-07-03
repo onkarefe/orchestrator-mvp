@@ -36,6 +36,10 @@
       </div>
       <dl class="meta-grid">
         <div class="meta-item">
+          <dt>Status</dt>
+          <dd><span class="status-badge <%= statusClass(job.status) %>"><%= display(job.status) %></span></dd>
+        </div>
+        <div class="meta-item">
           <dt>Output width</dt>
           <dd><%= display(job.width_mm) %> mm</dd>
         </div>
@@ -49,15 +53,39 @@
         </div>
         <div class="meta-item">
           <dt>Attempts</dt>
-          <dd><%= display(job.attempt_count) %></dd>
+          <dd><%= display(job.attempt_count) %> / <%= display(job.max_attempts) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Locked at</dt>
+          <dd><%= display(job.locked_at) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Locked by</dt>
+          <dd class="mono"><%= display(job.locked_by) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Manual review reason</dt>
+          <dd><%= display(job.manual_review_reason) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Last error</dt>
+          <dd><%= display(job.last_error) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Artifact manifest path</dt>
+          <dd class="mono"><%= display(job.artifact_manifest_path) %></dd>
         </div>
         <div class="meta-item">
           <dt>Created</dt>
           <dd><%= display(job.created_at) %></dd>
         </div>
         <div class="meta-item">
-          <dt>Updated</dt>
-          <dd><%= display(job.updated_at) %></dd>
+          <dt>Started</dt>
+          <dd><%= display(job.started_at) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>Completed</dt>
+          <dd><%= display(job.completed_at) %></dd>
         </div>
       </dl>
     </section>

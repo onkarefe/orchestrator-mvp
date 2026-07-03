@@ -45,6 +45,16 @@ function getExecutor(db) {
   return db ?? pool;
 }
 
+function normalizePagination(limit, offset) {
+  const parsedLimit = Number.parseInt(limit, 10);
+  const parsedOffset = Number.parseInt(offset, 10);
+
+  return {
+    limit: Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50,
+    offset: Number.isFinite(parsedOffset) && parsedOffset >= 0 ? parsedOffset : 0,
+  };
+}
+
 export async function createFactoryCallback(data, db = pool) {
   const executor = getExecutor(db);
   const [result] = await executor.execute(
@@ -91,6 +101,17 @@ export async function findFactoryCallbackById(id, db = pool) {
   );
 
   return normalizeFactoryCallback(rows[0]);
+}
+
+export async function listFactoryCallbacks({ limit, offset } = {}) {
+  const pagination = normalizePagination(limit, offset);
+  const [rows] = await pool.execute(
+    `SELECT * FROM factory_callbacks
+    ORDER BY created_at DESC
+    LIMIT ${pagination.limit} OFFSET ${pagination.offset}`
+  );
+
+  return rows.map(normalizeFactoryCallback);
 }
 
 export async function findOriginalFactoryCallbackByDeliveryId(
@@ -143,6 +164,7 @@ export async function updateFactoryCallbackProcessingStatus(
 export default {
   createFactoryCallback,
   findFactoryCallbackById,
+  listFactoryCallbacks,
   findOriginalFactoryCallbackByDeliveryId,
   updateFactoryCallbackProcessingStatus,
 };
