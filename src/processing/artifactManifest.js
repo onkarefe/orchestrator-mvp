@@ -59,6 +59,7 @@ export function buildArtifactManifest({
   widthMm,
   heightMm,
   cropRatio,
+  validationResult = null,
 }) {
   return {
     schema: ARTIFACT_MANIFEST_SCHEMA,
@@ -108,6 +109,7 @@ export function buildArtifactManifest({
         source_path: entry.filePath,
       })),
     },
+    validation: validationResult,
     app: {
       node_env: process.env.NODE_ENV ?? null,
     },

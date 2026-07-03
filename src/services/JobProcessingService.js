@@ -125,7 +125,7 @@ export async function processJobById(jobId) {
       totalSizeBytes: result.zipSizeBytes,
       fileSize: result.zipSizeBytes,
       status: 'available',
-      validationStatus: 'pending',
+      validationStatus: result.validationResult?.validationStatus ?? 'pending',
     });
 
     await markJobCompletedWithArtifactManifest(job.id, result.manifestPath);
@@ -142,6 +142,7 @@ export async function processJobById(jobId) {
         zipFileName: result.zipFileName,
         manifestPath: result.manifestPath,
         checksum: result.zipChecksum,
+        validationStatus: result.validationResult?.validationStatus ?? null,
       },
     });
 
@@ -153,6 +154,7 @@ export async function processJobById(jobId) {
       zipFileName: result.zipFileName,
       manifestPath: result.manifestPath,
       checksum: result.zipChecksum,
+      validationStatus: result.validationResult?.validationStatus ?? null,
     };
   } catch (error) {
     if (job) {

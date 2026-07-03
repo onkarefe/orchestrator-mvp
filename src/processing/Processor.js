@@ -2,6 +2,10 @@ import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import {
+  assertArtifactConsistency,
+  validateArtifactConsistency,
+} from './artifactConsistency.js';
 import { createArtifactManifest } from './artifactManifest.js';
 import { calculateSafeCrop, getImageMetadata } from './image.js';
 import { createJobWorkspace, sanitizePathSegment } from './jobWorkspace.js';
@@ -166,6 +170,18 @@ export async function processJobToZip({ order, job }) {
     filePath: xmlTempPath,
   });
 
+  const validationResult = await validateArtifactConsistency({
+    xmlFileName,
+    xmlFilePath: xmlTempPath,
+    panelFiles,
+    fileEntries,
+    panelInfo,
+    pageWidthMm,
+    pageHeightMm: heightMm,
+  });
+
+  assertArtifactConsistency(validationResult);
+
   await createZipFromFileEntries(workspace.workZipPath, fileEntries);
   await moveFileWithoutOverwrite(workspace.workZipPath, workspace.finalZipPath);
   const manifestResult = await createArtifactManifest({
@@ -182,6 +198,7 @@ export async function processJobToZip({ order, job }) {
     widthMm,
     heightMm,
     cropRatio,
+    validationResult,
   });
 
   return {
@@ -191,6 +208,7 @@ export async function processJobToZip({ order, job }) {
     zipSizeBytes: manifestResult.zipSizeBytes,
     manifestPath: manifestResult.manifestPath,
     manifest: manifestResult.manifest,
+    validationResult,
     panelFiles,
     panelInfo,
     fileCount: fileEntries.length,
