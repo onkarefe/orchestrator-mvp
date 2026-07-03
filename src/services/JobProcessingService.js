@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 
 import { createArtifact } from '../models/ArtifactModel.js';
+import { JOB_STATUSES } from '../constants/statuses.js';
 import {
   findJobById,
   incrementJobAttempt,
@@ -11,6 +12,7 @@ import {
 } from '../models/JobModel.js';
 import { findOrderById, updateOrderStatus } from '../models/OrderModel.js';
 import { processJobToZip } from '../processing/Processor.js';
+import { checkProcessingDiskSpace } from './DiskGuardService.js';
 import { logError, logInfo } from './LogService.js';
 
 function terminalResult(job, reason) {
@@ -23,8 +25,31 @@ function terminalResult(job, reason) {
   };
 }
 
+function diskGuardResult(job, order, diskSpace) {
+  return {
+    jobId: job.id,
+    orderId: order.id,
+    status: 'failed',
+    skipped: true,
+    reason: diskSpace.reason,
+    diskSpace,
+  };
+}
+
+export function getJobProcessingStatusGate(job) {
+  if (!job || job.status === JOB_STATUSES.PENDING) {
+    return null;
+  }
+
+  return terminalResult(job, 'job_not_pending');
+}
+
 export async function processNextPendingJob() {
-  const jobs = await listJobs({ status: 'pending', limit: 1, offset: 0 });
+  const jobs = await listJobs({
+    status: JOB_STATUSES.PENDING,
+    limit: 1,
+    offset: 0,
+  });
 
   if (jobs.length === 0) {
     return null;
@@ -44,12 +69,10 @@ export async function processJobById(jobId) {
       throw new Error(`Job not found: ${jobId}`);
     }
 
-    if (job.status === 'completed') {
-      return terminalResult(job, 'job_already_completed');
-    }
+    const statusGateResult = getJobProcessingStatusGate(job);
 
-    if (job.status === 'processing') {
-      return terminalResult(job, 'job_already_processing');
+    if (statusGateResult) {
+      return statusGateResult;
     }
 
     order = await findOrderById(job.order_id);
@@ -57,6 +80,26 @@ export async function processJobById(jobId) {
     if (!order) {
       await markJobFailed(job.id, 'Related order not found');
       throw new Error(`Related order not found for job: ${job.id}`);
+    }
+
+    const diskSpace = await checkProcessingDiskSpace();
+
+    if (!diskSpace.ok) {
+      const failureReason = diskSpace.reason || 'disk_guard_failed';
+
+      await markJobFailed(job.id, failureReason);
+      await updateOrderStatus(order.id, 'failed');
+
+      await logError({
+        scopeType: 'job',
+        orderId: order.id,
+        jobId: job.id,
+        step: 'job.disk_guard_failed',
+        message: 'Job processing blocked by disk guard',
+        detailsJson: diskSpace,
+      });
+
+      return diskGuardResult(job, order, diskSpace);
     }
 
     job = await incrementJobAttempt(job.id);
@@ -132,4 +175,5 @@ export async function processJobById(jobId) {
 export default {
   processNextPendingJob,
   processJobById,
+  getJobProcessingStatusGate,
 };
