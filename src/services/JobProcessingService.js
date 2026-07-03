@@ -1,12 +1,10 @@
-import fs from 'node:fs/promises';
-
 import { createArtifact } from '../models/ArtifactModel.js';
 import { JOB_STATUSES } from '../constants/statuses.js';
 import {
   findJobById,
   incrementJobAttempt,
   listJobs,
-  markJobCompleted,
+  markJobCompletedWithArtifactManifest,
   markJobFailed,
   markJobProcessing,
 } from '../models/JobModel.js';
@@ -115,18 +113,22 @@ export async function processJobById(jobId) {
     });
 
     const result = await processJobToZip({ order, job });
-    const stat = await fs.stat(result.zipPath);
     const artifact = await createArtifact({
       orderId: order.id,
       jobId: job.id,
       type: 'zip',
       fileName: result.zipFileName,
       filePath: result.zipPath,
-      fileSize: stat.size,
+      manifestPath: result.manifestPath,
+      checksum: result.zipChecksum,
+      fileCount: result.fileCount,
+      totalSizeBytes: result.zipSizeBytes,
+      fileSize: result.zipSizeBytes,
       status: 'available',
+      validationStatus: 'pending',
     });
 
-    await markJobCompleted(job.id);
+    await markJobCompletedWithArtifactManifest(job.id, result.manifestPath);
     await updateOrderStatus(order.id, 'completed');
 
     await logInfo({
@@ -138,6 +140,8 @@ export async function processJobById(jobId) {
       detailsJson: {
         artifactId: artifact.id,
         zipFileName: result.zipFileName,
+        manifestPath: result.manifestPath,
+        checksum: result.zipChecksum,
       },
     });
 
@@ -147,6 +151,8 @@ export async function processJobById(jobId) {
       artifactId: artifact.id,
       zipPath: result.zipPath,
       zipFileName: result.zipFileName,
+      manifestPath: result.manifestPath,
+      checksum: result.zipChecksum,
     };
   } catch (error) {
     if (job) {

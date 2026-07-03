@@ -22,21 +22,31 @@ export async function createArtifact(data) {
       type,
       file_name,
       file_path,
+      manifest_path,
+      checksum,
+      file_count,
+      total_size_bytes,
       file_size,
       expires_at,
       download_count,
-      status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      status,
+      validation_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.orderId ?? data.order_id ?? null,
       data.jobId ?? data.job_id ?? null,
       data.type,
       data.fileName ?? data.file_name,
       data.filePath ?? data.file_path,
+      data.manifestPath ?? data.manifest_path ?? null,
+      data.checksum ?? null,
+      data.fileCount ?? data.file_count ?? null,
+      data.totalSizeBytes ?? data.total_size_bytes ?? null,
       data.fileSize ?? data.file_size ?? null,
       data.expiresAt ?? data.expires_at ?? null,
       data.downloadCount ?? data.download_count ?? 0,
       data.status ?? 'available',
+      data.validationStatus ?? data.validation_status ?? null,
     ]
   );
 

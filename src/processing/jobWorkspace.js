@@ -66,6 +66,7 @@ export function buildJobWorkspace({
     `job-${safeJobId}`
   );
   const zipFileName = `w-${safeShopifyOrderId}-job-${safeJobId}-${safeRunId}.zip`;
+  const manifestFileName = `manifest-${safeRunId}.json`;
   const workspace = {
     jobId: safeJobId,
     orderId: safeOrderId,
@@ -76,7 +77,9 @@ export function buildJobWorkspace({
     finalDir,
     workZipPath: path.join(workDir, 'package', zipFileName),
     finalZipPath: path.join(finalDir, zipFileName),
+    manifestPath: path.join(finalDir, manifestFileName),
     zipFileName,
+    manifestFileName,
   };
 
   if (!isPathInside(workspace.workDir, tmpDir)) {

@@ -195,6 +195,22 @@ export async function markJobCompleted(id) {
   return findJobById(id);
 }
 
+export async function markJobCompletedWithArtifactManifest(
+  id,
+  artifactManifestPath
+) {
+  await pool.execute(
+    `UPDATE jobs
+    SET status = ?,
+      artifact_manifest_path = ?,
+      completed_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
+    ['completed', artifactManifestPath, id]
+  );
+
+  return findJobById(id);
+}
+
 export async function markJobFailed(id, errorMessage) {
   await pool.execute(
     'UPDATE jobs SET status = ?, last_error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?',
@@ -219,6 +235,7 @@ export default {
   updateJobManualReview,
   markJobProcessing,
   markJobCompleted,
+  markJobCompletedWithArtifactManifest,
   markJobFailed,
   incrementJobAttempt,
 };

@@ -2,6 +2,7 @@ import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { createArtifactManifest } from './artifactManifest.js';
 import { calculateSafeCrop, getImageMetadata } from './image.js';
 import { createJobWorkspace, sanitizePathSegment } from './jobWorkspace.js';
 import { resolveMasterPath } from './masterResolver.js';
@@ -167,12 +168,32 @@ export async function processJobToZip({ order, job }) {
 
   await createZipFromFileEntries(workspace.workZipPath, fileEntries);
   await moveFileWithoutOverwrite(workspace.workZipPath, workspace.finalZipPath);
+  const manifestResult = await createArtifactManifest({
+    order,
+    job,
+    workspace,
+    shopifyOrderId,
+    zipFileName: workspace.zipFileName,
+    zipPath: workspace.finalZipPath,
+    panelFiles,
+    panelInfo,
+    xmlFileName,
+    fileEntries,
+    widthMm,
+    heightMm,
+    cropRatio,
+  });
 
   return {
     zipPath: workspace.finalZipPath,
     zipFileName: workspace.zipFileName,
+    zipChecksum: manifestResult.zipChecksum,
+    zipSizeBytes: manifestResult.zipSizeBytes,
+    manifestPath: manifestResult.manifestPath,
+    manifest: manifestResult.manifest,
     panelFiles,
     panelInfo,
+    fileCount: fileEntries.length,
     artifactDir: workspace.finalDir,
     workDir: workspace.workDir,
     runId: workspace.runId,
