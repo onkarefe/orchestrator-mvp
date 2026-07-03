@@ -4,78 +4,26 @@ import {
   findJobByShopifyOrderAndLineItem,
   listJobs,
 } from '../models/JobModel.js';
+import { validateConfiguratorLineItem } from './PreflightValidationService.js';
 
-function findConfiguratorPayloadProperty(lineItem) {
-  const properties = Array.isArray(lineItem?.properties) ? lineItem.properties : [];
-
-  return properties.find((property) => property?.name === 'configurator_payload');
+function stringOrNull(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function parseConfiguratorPayload(value) {
-  if (!value) {
-    return null;
-  }
-
-  if (typeof value === 'object') {
-    return value;
-  }
-
-  if (typeof value !== 'string') {
-    return null;
-  }
-
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
+function numberOrNull(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function isFiniteNumber(value) {
-  return typeof value === 'number' && Number.isFinite(value);
+function objectOrNull(value) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : null;
 }
 
-function isValidCropRatio(cropRatio) {
-  if (!cropRatio || typeof cropRatio !== 'object' || Array.isArray(cropRatio)) {
-    return false;
-  }
-
-  const { x, y, w, h } = cropRatio;
-
-  if (![x, y, w, h].every(isFiniteNumber)) {
-    return false;
-  }
-
-  return (
-    x >= 0 &&
-    y >= 0 &&
-    w > 0 &&
-    h > 0 &&
-    x <= 1 &&
-    y <= 1 &&
-    w <= 1 &&
-    h <= 1 &&
-    x + w <= 1.000001 &&
-    y + h <= 1.000001
-  );
-}
-
-function isValidConfiguratorPayload(configuratorPayload) {
-  if (!configuratorPayload || typeof configuratorPayload !== 'object') {
-    return false;
-  }
-
-  const width = configuratorPayload.output?.width;
-  const height = configuratorPayload.output?.height;
-
-  return (
-    Boolean(configuratorPayload.master_asset_id) &&
-    isFiniteNumber(width) &&
-    isFiniteNumber(height) &&
-    width > 0 &&
-    height > 0 &&
-    isValidCropRatio(configuratorPayload.crop_ratio)
-  );
+function formatManualReviewReason(validation) {
+  return validation.errors.length
+    ? validation.errors.join(', ')
+    : validation.reason;
 }
 
 export async function createConfiguratorJobFromLineItem(
@@ -83,15 +31,16 @@ export async function createConfiguratorJobFromLineItem(
   lineItem,
   { shopifyOrderId = null, db = undefined } = {}
 ) {
-  const payloadProperty = findConfiguratorPayloadProperty(lineItem);
-  const configuratorPayload = parseConfiguratorPayload(payloadProperty?.value);
+  const validation = validateConfiguratorLineItem(lineItem);
 
-  if (!isValidConfiguratorPayload(configuratorPayload)) {
+  if (!validation.isConfigurable) {
     return {
       job: null,
       created: false,
       duplicate: false,
-      reason: 'invalid_configurator_payload',
+      manualReview: false,
+      reason: 'non_configurable_line_item',
+      errors: [],
     };
   }
 
@@ -107,7 +56,53 @@ export async function createConfiguratorJobFromLineItem(
       job: existingJob,
       created: false,
       duplicate: true,
+      manualReview: existingJob.status === JOB_STATUSES.MANUAL_REVIEW,
       reason: 'duplicate_line_item',
+      errors: [],
+    };
+  }
+
+  const configuratorPayload = validation.configuratorPayload;
+  const masterAssetId = stringOrNull(configuratorPayload?.master_asset_id);
+  const manualReviewReason = validation.ok
+    ? null
+    : formatManualReviewReason(validation);
+
+  if (!validation.ok) {
+    const job = await createJob(
+      {
+        orderId,
+        shopifyOrderId,
+        shopifyLineItemId,
+        productTitle: lineItem.title ?? lineItem.name ?? null,
+        variantTitle: lineItem.variant_title ?? null,
+        sku: stringOrNull(lineItem.sku),
+        masterAssetId,
+        widthMm: numberOrNull(configuratorPayload?.output?.width),
+        heightMm: numberOrNull(configuratorPayload?.output?.height),
+        cropRatioJson: objectOrNull(configuratorPayload?.crop_ratio),
+        status: JOB_STATUSES.MANUAL_REVIEW,
+        manualReviewReason,
+        rawPayloadJson: {
+          lineItem,
+          configuratorPayload,
+          preflightValidation: {
+            ok: validation.ok,
+            reason: validation.reason,
+            errors: validation.errors,
+          },
+        },
+      },
+      db
+    );
+
+    return {
+      job,
+      created: true,
+      duplicate: false,
+      manualReview: true,
+      reason: validation.reason,
+      errors: validation.errors,
     };
   }
 
@@ -118,14 +113,19 @@ export async function createConfiguratorJobFromLineItem(
       shopifyLineItemId,
       productTitle: lineItem.title ?? lineItem.name ?? null,
       variantTitle: lineItem.variant_title ?? null,
-      sku: lineItem.sku ?? null,
-      masterAssetId: configuratorPayload.master_asset_id ?? null,
-      widthMm: configuratorPayload.output?.width ?? null,
-      heightMm: configuratorPayload.output?.height ?? null,
-      cropRatioJson: configuratorPayload.crop_ratio ?? null,
+      sku: stringOrNull(lineItem.sku),
+      masterAssetId,
+      widthMm: configuratorPayload.output.width,
+      heightMm: configuratorPayload.output.height,
+      cropRatioJson: configuratorPayload.crop_ratio,
       rawPayloadJson: {
         lineItem,
         configuratorPayload,
+        preflightValidation: {
+          ok: validation.ok,
+          reason: validation.reason,
+          errors: validation.errors,
+        },
       },
       status: JOB_STATUSES.PENDING,
     },
@@ -136,7 +136,9 @@ export async function createConfiguratorJobFromLineItem(
     job,
     created: true,
     duplicate: false,
+    manualReview: false,
     reason: null,
+    errors: [],
   };
 }
 

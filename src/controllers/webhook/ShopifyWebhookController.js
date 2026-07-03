@@ -236,6 +236,7 @@ export async function recordOrdersPaidWebhook(req, res) {
       orderId: result.order.id,
       jobCount: result.jobs.length,
       skippedDuplicateJobCount: result.skippedDuplicateJobs?.length ?? 0,
+      manualReviewJobCount: result.manualReviewJobs?.length ?? 0,
     });
   } catch (error) {
     console.error('Shopify webhook processing failed:', safeErrorForLog(error));

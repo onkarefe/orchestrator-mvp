@@ -3,10 +3,15 @@ import pool from '../db/connection.js';
 import {
   createOrder,
   findOrderByShopifyOrderId,
+  updateOrderManualReview,
   updateOrderStatus,
 } from '../models/OrderModel.js';
+import { updateJobManualReview } from '../models/JobModel.js';
 import { createConfiguratorJobFromLineItem } from './JobService.js';
 import { logError, logInfo } from './LogService.js';
+
+const ORDER_BLOCKED_BY_MANUAL_REVIEW_REASON =
+  'order_blocked_by_manual_review';
 
 function getCustomerName(payload) {
   if (payload.shipping_address?.name) {
@@ -28,6 +33,21 @@ async function writeInfoLogs(logEvents) {
   for (const logEvent of logEvents) {
     await logInfo(logEvent);
   }
+}
+
+export function getOrderPreflightDisposition({
+  pendingJobs = [],
+  manualReviewJobs = [],
+} = {}) {
+  const requiresManualReview = manualReviewJobs.length > 0;
+
+  return {
+    requiresManualReview,
+    pendingJobCount: requiresManualReview ? 0 : pendingJobs.length,
+    blockedPendingJobCount: requiresManualReview ? pendingJobs.length : 0,
+    manualReviewJobCount:
+      manualReviewJobs.length + (requiresManualReview ? pendingJobs.length : 0),
+  };
 }
 
 export async function createOrderAndJobsFromShopifyPayload(payload) {
@@ -70,6 +90,8 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
         jobs: [],
         created: false,
         duplicate: true,
+        skippedDuplicateJobs: [],
+        manualReviewJobs: [],
       };
     }
 
@@ -99,6 +121,8 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
 
     const jobs = [];
     const skippedDuplicateJobs = [];
+    const manualReviewJobs = [];
+    const manualReviewReasons = new Set();
     const lineItems = Array.isArray(payload.line_items) ? payload.line_items : [];
 
     for (const lineItem of lineItems) {
@@ -133,6 +157,29 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
         continue;
       }
 
+      if (result.manualReview) {
+        manualReviewJobs.push(result.job);
+
+        if (result.reason) {
+          manualReviewReasons.add(result.reason);
+        }
+
+        logEvents.push({
+          scopeType: 'job',
+          orderId: order.id,
+          jobId: result.job.id,
+          step: 'job.manual_review_created',
+          message: 'Configurator job requires manual review',
+          detailsJson: {
+            shopifyLineItemId: result.job.shopify_line_item_id,
+            reason: result.reason,
+            errors: result.errors,
+          },
+        });
+
+        continue;
+      }
+
       jobs.push(result.job);
 
       logEvents.push({
@@ -148,7 +195,56 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
       });
     }
 
-    if (jobs.length > 0) {
+    const preflightDisposition = getOrderPreflightDisposition({
+      pendingJobs: jobs,
+      manualReviewJobs,
+    });
+
+    if (preflightDisposition.requiresManualReview) {
+      const blockedPendingJobs = jobs.splice(0, jobs.length);
+
+      for (const job of blockedPendingJobs) {
+        const manualReviewJob = await updateJobManualReview(
+          job.id,
+          ORDER_BLOCKED_BY_MANUAL_REVIEW_REASON,
+          connection
+        );
+
+        manualReviewJobs.push(manualReviewJob);
+
+        logEvents.push({
+          scopeType: 'job',
+          orderId: order.id,
+          jobId: manualReviewJob.id,
+          step: 'job.manual_review_order_block',
+          message: 'Configurator job blocked because order requires manual review',
+          detailsJson: {
+            shopifyLineItemId: manualReviewJob.shopify_line_item_id,
+            reason: ORDER_BLOCKED_BY_MANUAL_REVIEW_REASON,
+          },
+        });
+      }
+
+      const manualReviewReason = Array.from(manualReviewReasons).join(', ');
+
+      order = await updateOrderManualReview(
+        order.id,
+        manualReviewReason || 'manual_review',
+        connection
+      );
+
+      logEvents.push({
+        scopeType: 'order',
+        orderId: order.id,
+        step: 'order.manual_review',
+        message: 'Order contains configurable items requiring manual review',
+        detailsJson: {
+          shopifyOrderId,
+          manualReviewJobCount: manualReviewJobs.length,
+          reasons: Array.from(manualReviewReasons),
+        },
+      });
+    } else if (jobs.length > 0) {
       order = await updateOrderStatus(order.id, 'queued', connection);
     } else {
       order = await updateOrderStatus(
@@ -178,6 +274,7 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
       created: true,
       duplicate: false,
       skippedDuplicateJobs,
+      manualReviewJobs,
     };
   } catch (error) {
     if (transactionStarted) {
@@ -202,4 +299,5 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
 
 export default {
   createOrderAndJobsFromShopifyPayload,
+  getOrderPreflightDisposition,
 };

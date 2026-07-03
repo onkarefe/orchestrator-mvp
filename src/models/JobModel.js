@@ -64,11 +64,12 @@ export async function createJob(data, db = pool) {
       panel_width_cm,
       status,
       attempt_count,
+      manual_review_reason,
       last_error,
       raw_payload_json,
       started_at,
       completed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.orderId ?? data.order_id ?? null,
       data.shopifyOrderId ?? data.shopify_order_id ?? null,
@@ -84,6 +85,7 @@ export async function createJob(data, db = pool) {
       data.panelWidthCm ?? data.panel_width_cm ?? null,
       data.status ?? 'pending',
       data.attemptCount ?? data.attempt_count ?? 0,
+      data.manualReviewReason ?? data.manual_review_reason ?? null,
       data.lastError ?? data.last_error ?? null,
       jsonForWrite(data.rawPayloadJson ?? data.raw_payload_json ?? null),
       data.startedAt ?? data.started_at ?? null,
@@ -160,6 +162,21 @@ export async function updateJobStatus(id, status) {
   return findJobById(id);
 }
 
+export async function updateJobManualReview(
+  id,
+  manualReviewReason,
+  db = pool
+) {
+  const executor = getExecutor(db);
+
+  await executor.execute(
+    'UPDATE jobs SET status = ?, manual_review_reason = ? WHERE id = ?',
+    ['manual_review', manualReviewReason, id]
+  );
+
+  return findJobById(id, executor);
+}
+
 export async function markJobProcessing(id) {
   await pool.execute(
     'UPDATE jobs SET status = ?, started_at = CURRENT_TIMESTAMP WHERE id = ?',
@@ -199,6 +216,7 @@ export default {
   findJobByShopifyOrderAndLineItem,
   listJobs,
   updateJobStatus,
+  updateJobManualReview,
   markJobProcessing,
   markJobCompleted,
   markJobFailed,

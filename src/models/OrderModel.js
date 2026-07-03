@@ -55,8 +55,9 @@ export async function createOrder(data, db = pool) {
       customer_email,
       financial_status,
       status,
+      manual_review_reason,
       raw_payload_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.shopifyOrderId ?? data.shopify_order_id ?? null,
       data.shopifyOrderNumber ?? data.shopify_order_number ?? null,
@@ -64,6 +65,7 @@ export async function createOrder(data, db = pool) {
       data.customerEmail ?? data.customer_email ?? null,
       data.financialStatus ?? data.financial_status ?? null,
       data.status ?? 'received',
+      data.manualReviewReason ?? data.manual_review_reason ?? null,
       jsonForWrite(data.rawPayloadJson ?? data.raw_payload_json ?? null),
     ]
   );
@@ -116,10 +118,26 @@ export async function updateOrderStatus(id, status, db = pool) {
   return findOrderById(id, executor);
 }
 
+export async function updateOrderManualReview(
+  id,
+  manualReviewReason,
+  db = pool
+) {
+  const executor = getExecutor(db);
+
+  await executor.execute(
+    'UPDATE orders SET status = ?, manual_review_reason = ? WHERE id = ?',
+    ['manual_review', manualReviewReason, id]
+  );
+
+  return findOrderById(id, executor);
+}
+
 export default {
   createOrder,
   findOrderById,
   findOrderByShopifyOrderId,
   listOrders,
   updateOrderStatus,
+  updateOrderManualReview,
 };
