@@ -46,6 +46,18 @@ const env = {
   MASTER_STORAGE_DIR: process.env.MASTER_STORAGE_DIR || 'storage/masters',
   ADMIN_ACCESS_ENABLED: booleanFromEnv('ADMIN_ACCESS_ENABLED', true),
   ADMIN_ACCESS_TOKEN: process.env.ADMIN_ACCESS_TOKEN ?? '',
+  ADMIN_COOKIE_SECURE: booleanFromEnv('ADMIN_COOKIE_SECURE', true),
+  ADMIN_SESSION_TTL_HOURS: integerFromEnv('ADMIN_SESSION_TTL_HOURS', 12, {
+    min: 1,
+  }),
+  ADMIN_LOGIN_MAX_ATTEMPTS: integerFromEnv('ADMIN_LOGIN_MAX_ATTEMPTS', 5, {
+    min: 1,
+  }),
+  ADMIN_LOGIN_WINDOW_MINUTES: integerFromEnv(
+    'ADMIN_LOGIN_WINDOW_MINUTES',
+    15,
+    { min: 1 }
+  ),
   SHOPIFY_WEBHOOK_HMAC_REQUIRED: booleanFromEnv(
     'SHOPIFY_WEBHOOK_HMAC_REQUIRED',
     true

@@ -1,5 +1,6 @@
-import { Router } from 'express';
+import { Router, urlencoded } from 'express';
 
+import AdminAuthController from '../controllers/admin/AdminAuthController.js';
 import ArtifactController from '../controllers/admin/ArtifactController.js';
 import DashboardController from '../controllers/admin/DashboardController.js';
 import FactoryCallbackController from '../controllers/admin/FactoryCallbackController.js';
@@ -12,8 +13,16 @@ import requireAdminAccess from '../middleware/adminAccess.js';
 
 const router = Router();
 
+router.get('/admin/login', AdminAuthController.showLogin);
+router.post(
+  '/admin/login',
+  urlencoded({ extended: false }),
+  AdminAuthController.login
+);
+
 router.use('/admin', requireAdminAccess);
 
+router.post('/admin/logout', AdminAuthController.logout);
 router.get('/admin', DashboardController.index);
 router.get('/admin/orders', OrderController.index);
 router.get('/admin/orders/:id', OrderController.show);

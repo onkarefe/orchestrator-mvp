@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 
 import env from '../config/env.js';
+import { authenticateAdminSessionRequest } from '../services/AdminAuthService.js';
 
 function scalarToString(value) {
   if (value === undefined || value === null) {
@@ -41,33 +42,78 @@ function getPresentedAdminToken(req) {
   );
 }
 
-export function requireAdminAccess(req, res, next) {
+function isHtmlNavigationRequest(req) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    return false;
+  }
+
+  if (getPresentedAdminToken(req)) {
+    return false;
+  }
+
+  const acceptHeader = scalarToString(req.get('accept'))?.toLowerCase() ?? '';
+
+  return acceptHeader.includes('text/html');
+}
+
+function requireTokenForProgrammaticRequest(res) {
+  res.set('WWW-Authenticate', 'Bearer realm="Wandini Admin"');
+  res.status(401).send('Admin access token or session required');
+}
+
+export async function requireAdminAccess(req, res, next) {
   if (!env.ADMIN_ACCESS_ENABLED) {
     next();
     return;
   }
 
   const configuredToken = String(env.ADMIN_ACCESS_TOKEN ?? '').trim();
-
-  if (!configuredToken) {
-    res.status(503).send('Admin access is not configured');
-    return;
-  }
-
   const presentedToken = getPresentedAdminToken(req);
+  let bearerFailureStatus = null;
 
-  if (!presentedToken) {
-    res.set('WWW-Authenticate', 'Bearer realm="Wandini Admin"');
-    res.status(401).send('Admin access token required');
+  if (presentedToken && configuredToken && secureEquals(presentedToken, configuredToken)) {
+    req.adminAccess = { method: 'bearer' };
+    next();
     return;
   }
 
-  if (!secureEquals(presentedToken, configuredToken)) {
+  if (presentedToken) {
+    bearerFailureStatus = configuredToken ? 403 : 503;
+  }
+
+  try {
+    const session = await authenticateAdminSessionRequest(req);
+
+    if (session) {
+      req.adminAccess = {
+        method: 'session',
+        session,
+        user: session.user,
+      };
+      next();
+      return;
+    }
+  } catch (error) {
+    next(error);
+    return;
+  }
+
+  if (bearerFailureStatus === 503) {
+    res.status(503).send('Admin access token is not configured');
+    return;
+  }
+
+  if (bearerFailureStatus === 403) {
     res.status(403).send('Admin access denied');
     return;
   }
 
-  next();
+  if (isHtmlNavigationRequest(req)) {
+    res.redirect('/admin/login');
+    return;
+  }
+
+  requireTokenForProgrammaticRequest(res);
 }
 
 export default requireAdminAccess;

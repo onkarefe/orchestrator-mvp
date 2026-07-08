@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><%= title %> | Wandini Orchestrator</title>
+    <link rel="stylesheet" href="/css/app.css">
+  </head>
+  <body>
+    <main class="admin-content">
+      <div class="page-container">
+        <section class="page">
+          <header class="page-header">
+            <div>
+              <p class="eyebrow">Admin</p>
+              <h1>Sign in</h1>
+              <p class="page-description">Use your Wandini Orchestrator admin username and password.</p>
+            </div>
+          </header>
+
+          <% if (error) { %>
+            <section class="alert-panel" role="alert">
+              <p class="section-label">Login failed</p>
+              <strong><%= error %></strong>
+            </section>
+          <% } %>
+
+          <section class="card">
+            <form action="/admin/login" method="post">
+              <p>
+                <label for="username">Username</label><br>
+                <input
+                  id="username"
+                  name="username"
+                  type="text"
+                  autocomplete="username"
+                  required
+                >
+              </p>
+
+              <p>
+                <label for="password">Password</label><br>
+                <input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autocomplete="current-password"
+                  required
+                >
+              </p>
+
+              <button class="button" type="submit">Sign in</button>
+            </form>
+          </section>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>
