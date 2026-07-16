@@ -23,12 +23,13 @@ function parseJson(value) {
 }
 
 function normalizePagination(limit, offset) {
-  const parsedLimit = Number.parseInt(limit, 10);
-  const parsedOffset = Number.parseInt(offset, 10);
+  const parsedLimit = Number(limit);
+  const parsedOffset = Number(offset);
 
   return {
-    limit: Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50,
-    offset: Number.isFinite(parsedOffset) && parsedOffset >= 0 ? parsedOffset : 0,
+    limit: Number.isSafeInteger(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50,
+    offset:
+      Number.isSafeInteger(parsedOffset) && parsedOffset >= 0 ? parsedOffset : 0,
   };
 }
 
@@ -179,9 +180,10 @@ export async function listJobs({ status, orderId, limit, offset } = {}) {
   }
 
   const whereSql = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+  params.push(pagination.limit, pagination.offset);
 
   const [rows] = await pool.execute(
-    `SELECT * FROM jobs${whereSql} ORDER BY created_at DESC LIMIT ${pagination.limit} OFFSET ${pagination.offset}`,
+    `SELECT * FROM jobs${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
     params
   );
 
