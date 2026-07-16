@@ -1,4 +1,5 @@
 import pool from '../db/connection.js';
+import { assertFlatSqlParams } from '../db/sqlParams.js';
 
 function jsonForWrite(value) {
   if (value === undefined || value === null) {
@@ -100,11 +101,11 @@ export async function listLogs({ scopeType, orderId, jobId, level, limit, offset
 
   const whereSql = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
   params.push(pagination.limit, pagination.offset);
+  const sql = `SELECT * FROM logs${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
 
-  const [rows] = await pool.execute(
-    `SELECT * FROM logs${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-    params
-  );
+  assertFlatSqlParams(sql, params);
+
+  const [rows] = await pool.query(sql, params);
 
   return rows.map(normalizeLog);
 }

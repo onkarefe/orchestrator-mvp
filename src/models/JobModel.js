@@ -1,4 +1,5 @@
 import pool from '../db/connection.js';
+import { assertFlatSqlParams } from '../db/sqlParams.js';
 import { JOB_STATUSES } from '../constants/statuses.js';
 import { buildFactoryReference } from '../utils/factoryReference.js';
 
@@ -181,11 +182,13 @@ export async function listJobs({ status, orderId, limit, offset } = {}) {
 
   const whereSql = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
   params.push(pagination.limit, pagination.offset);
+  const sql = `SELECT * FROM jobs${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
 
-  const [rows] = await pool.execute(
-    `SELECT * FROM jobs${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-    params
-  );
+  assertFlatSqlParams(sql, params);
+
+  // Use mysql2's escaped text-query path for dynamic list reads. Staging's
+  // server-prepared path rejects the otherwise valid LIMIT/OFFSET bindings.
+  const [rows] = await pool.query(sql, params);
 
   return rows.map(normalizeJob);
 }
