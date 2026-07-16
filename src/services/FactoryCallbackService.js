@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 
 import env from '../config/env.js';
+import pool from '../db/connection.js';
+import { isDuplicateKeyError } from '../db/errors.js';
 import {
   FACTORY_CALLBACK_PROCESSING_STATUSES,
   ORDER_STATUSES,
@@ -12,9 +14,9 @@ import {
   updateFactoryCallbackProcessingStatus,
 } from '../models/FactoryCallbackModel.js';
 import {
-  findOrderByFactoryOrderId,
-  findOrderById,
-  findOrderByShopifyOrderId,
+  findOrderByFactoryOrderIdForUpdate,
+  findOrderByIdForUpdate,
+  findOrderByShopifyOrderIdForUpdate,
   updateOrderFactoryState,
 } from '../models/OrderModel.js';
 import { redact } from '../utils/redact.js';
@@ -359,6 +361,7 @@ function getCallbackRecordData({
   const identifiers = extractIdentifiers(payload, headers, errors);
 
   return {
+    provider: 'factory_simulation',
     ...identifiers,
     status: extractStatusForStorage(payload),
     rawPayloadJson: redact(payload ?? null),
@@ -403,17 +406,17 @@ async function recordRejectedCallback({
   return callback;
 }
 
-async function findOrderForCallback(normalized) {
+async function findOrderForCallback(normalized, db) {
   if (normalized.orderId) {
-    return findOrderById(normalized.orderId);
+    return findOrderByIdForUpdate(normalized.orderId, db);
   }
 
   if (normalized.shopifyOrderId) {
-    return findOrderByShopifyOrderId(normalized.shopifyOrderId);
+    return findOrderByShopifyOrderIdForUpdate(normalized.shopifyOrderId, db);
   }
 
   if (normalized.factoryOrderId) {
-    return findOrderByFactoryOrderId(normalized.factoryOrderId);
+    return findOrderByFactoryOrderIdForUpdate(normalized.factoryOrderId, db);
   }
 
   return null;
@@ -455,16 +458,26 @@ function getUnsafeTransitionReason(order, targetOrderStatus) {
   return null;
 }
 
-async function markCallbackManualReview(callback, errorMessage, orderId = null) {
+async function markCallbackManualReview(
+  callback,
+  errorMessage,
+  orderId = null,
+  db = undefined
+) {
   const updatedCallback = await updateFactoryCallbackProcessingStatus(
     callback.id,
     {
       processingStatus: FACTORY_CALLBACK_PROCESSING_STATUSES.MANUAL_REVIEW,
       errorMessage,
       orderId,
-    }
+    },
+    db
   );
 
+  return updatedCallback;
+}
+
+async function logCallbackManualReview(updatedCallback, errorMessage, orderId) {
   await logWarning({
     scopeType: 'order',
     orderId,
@@ -477,8 +490,31 @@ async function markCallbackManualReview(callback, errorMessage, orderId = null) 
       deliveryId: updatedCallback.delivery_id,
     },
   });
+}
 
-  return updatedCallback;
+async function buildDuplicateCallbackResult(originalCallback, normalized) {
+  await logInfo({
+    scopeType: 'system',
+    step: 'factory_callback.duplicate',
+    message: 'Duplicate factory callback ignored',
+    detailsJson: {
+      callbackId: originalCallback.id,
+      duplicateOfId: originalCallback.id,
+      deliveryId: normalized.deliveryId,
+      factoryStatus: normalized.status,
+    },
+  });
+
+  return {
+    httpStatus: 200,
+    body: {
+      ok: true,
+      duplicate: true,
+      callbackId: originalCallback.id,
+      duplicateOfId: originalCallback.id,
+      processingStatus: FACTORY_CALLBACK_PROCESSING_STATUSES.DUPLICATE,
+    },
+  };
 }
 
 export async function receiveFactoryCallback({ payload, headers }) {
@@ -539,190 +575,224 @@ export async function receiveFactoryCallback({ payload, headers }) {
   }
 
   const normalized = validation.normalized;
+  const connection = await pool.getConnection();
+  let transactionStarted = false;
 
-  if (normalized.deliveryId) {
-    const originalCallback = await findOriginalFactoryCallbackByDeliveryId(
-      normalized.deliveryId
-    );
+  try {
+    await connection.beginTransaction();
+    transactionStarted = true;
 
-    if (originalCallback) {
-      const duplicateCallback = await createFactoryCallback(
-        getCallbackRecordData({
-          payload,
-          headers,
-          authValid: auth.authValid,
-          processingStatus: FACTORY_CALLBACK_PROCESSING_STATUSES.DUPLICATE,
-          duplicateOfId: originalCallback.id,
-          errorMessage: 'Duplicate factory callback delivery',
-        })
+    if (normalized.deliveryId) {
+      const originalCallback = await findOriginalFactoryCallbackByDeliveryId(
+        normalized.deliveryId,
+        connection
       );
 
-      await logInfo({
-        scopeType: 'system',
-        step: 'factory_callback.duplicate',
-        message: 'Duplicate factory callback ignored',
-        detailsJson: {
-          callbackId: duplicateCallback.id,
-          duplicateOfId: originalCallback.id,
-          deliveryId: normalized.deliveryId,
-          factoryStatus: normalized.status,
-        },
-      });
+      if (originalCallback) {
+        await connection.commit();
+        transactionStarted = false;
+        return buildDuplicateCallbackResult(originalCallback, normalized);
+      }
+    }
+
+    const callback = await createFactoryCallback(
+      getCallbackRecordData({
+        payload,
+        headers,
+        authValid: auth.authValid,
+        processingStatus: FACTORY_CALLBACK_PROCESSING_STATUSES.RECEIVED,
+      }),
+      connection
+    );
+    const order = await findOrderForCallback(normalized, connection);
+
+    if (!order) {
+      const updatedCallback = await markCallbackManualReview(
+        callback,
+        'factory_callback_order_not_found',
+        null,
+        connection
+      );
+
+      await connection.commit();
+      transactionStarted = false;
+
+      await logCallbackManualReview(
+        updatedCallback,
+        'factory_callback_order_not_found',
+        null
+      );
 
       return {
-        httpStatus: 200,
+        httpStatus: 202,
         body: {
           ok: true,
-          duplicate: true,
-          callbackId: duplicateCallback.id,
-          duplicateOfId: originalCallback.id,
-          processingStatus: FACTORY_CALLBACK_PROCESSING_STATUSES.DUPLICATE,
+          callbackId: updatedCallback.id,
+          processingStatus: updatedCallback.processing_status,
+          orderUpdated: false,
+          error: 'factory_callback_order_not_found',
         },
       };
     }
-  }
 
-  const callback = await createFactoryCallback(
-    getCallbackRecordData({
-      payload,
-      headers,
-      authValid: auth.authValid,
-      processingStatus: FACTORY_CALLBACK_PROCESSING_STATUSES.RECEIVED,
-    })
-  );
+    const mismatchReason = getOrderIdentifierMismatch(order, normalized);
 
-  const order = await findOrderForCallback(normalized);
+    if (mismatchReason) {
+      const updatedCallback = await markCallbackManualReview(
+        callback,
+        mismatchReason,
+        order.id,
+        connection
+      );
 
-  if (!order) {
-    const updatedCallback = await markCallbackManualReview(
-      callback,
-      'factory_callback_order_not_found'
-    );
+      await connection.commit();
+      transactionStarted = false;
 
-    return {
-      httpStatus: 202,
-      body: {
-        ok: true,
-        callbackId: updatedCallback.id,
-        processingStatus: updatedCallback.processing_status,
-        orderUpdated: false,
-        error: 'factory_callback_order_not_found',
-      },
-    };
-  }
+      await logCallbackManualReview(
+        updatedCallback,
+        mismatchReason,
+        order.id
+      );
 
-  const mismatchReason = getOrderIdentifierMismatch(order, normalized);
-
-  if (mismatchReason) {
-    const updatedCallback = await markCallbackManualReview(
-      callback,
-      mismatchReason,
-      order.id
-    );
-
-    return {
-      httpStatus: 202,
-      body: {
-        ok: true,
-        callbackId: updatedCallback.id,
-        processingStatus: updatedCallback.processing_status,
-        orderId: order.id,
-        orderUpdated: false,
-        error: mismatchReason,
-      },
-    };
-  }
-
-  const targetOrderStatus = FACTORY_STATUS_TO_ORDER_STATUS[normalized.status];
-  const unsafeReason = getUnsafeTransitionReason(order, targetOrderStatus);
-
-  if (unsafeReason) {
-    const updatedCallback = await markCallbackManualReview(
-      callback,
-      unsafeReason,
-      order.id
-    );
-
-    return {
-      httpStatus: 202,
-      body: {
-        ok: true,
-        callbackId: updatedCallback.id,
-        processingStatus: updatedCallback.processing_status,
-        orderId: order.id,
-        orderUpdated: false,
-        error: unsafeReason,
-      },
-    };
-  }
-
-  const factoryFailure = normalized.status === 'failed';
-  const manualReviewReason = factoryFailure
-    ? 'factory_callback_failed'
-    : undefined;
-  const updatedOrder = await updateOrderFactoryState(order.id, {
-    factoryStatus: normalized.status,
-    factoryOrderId: normalized.factoryOrderId,
-    status: targetOrderStatus,
-    manualReviewReason,
-  });
-  const callbackProcessingStatus = factoryFailure
-    ? FACTORY_CALLBACK_PROCESSING_STATUSES.MANUAL_REVIEW
-    : FACTORY_CALLBACK_PROCESSING_STATUSES.PROCESSED;
-  const updatedCallback = await updateFactoryCallbackProcessingStatus(
-    callback.id,
-    {
-      processingStatus: callbackProcessingStatus,
-      errorMessage: factoryFailure
-        ? 'factory_status_failed_requires_manual_review'
-        : null,
-      orderId: order.id,
+      return {
+        httpStatus: 202,
+        body: {
+          ok: true,
+          callbackId: updatedCallback.id,
+          processingStatus: updatedCallback.processing_status,
+          orderId: order.id,
+          orderUpdated: false,
+          error: mismatchReason,
+        },
+      };
     }
-  );
-  const shopifyUpdateTaskResult = await ensureShopifyUpdateTaskDryRun({
-    order: updatedOrder,
-    factoryCallback: updatedCallback,
-    factoryStatus: normalized.status,
-    factoryPayload: payload,
-  });
 
-  await logInfo({
-    scopeType: 'order',
-    orderId: updatedOrder.id,
-    step: 'factory_callback.processed',
-    message: 'Factory callback simulation processed',
-    detailsJson: {
-      callbackId: updatedCallback.id,
+    const targetOrderStatus = FACTORY_STATUS_TO_ORDER_STATUS[normalized.status];
+    const unsafeReason = getUnsafeTransitionReason(order, targetOrderStatus);
+
+    if (unsafeReason) {
+      const updatedCallback = await markCallbackManualReview(
+        callback,
+        unsafeReason,
+        order.id,
+        connection
+      );
+
+      await connection.commit();
+      transactionStarted = false;
+
+      await logCallbackManualReview(updatedCallback, unsafeReason, order.id);
+
+      return {
+        httpStatus: 202,
+        body: {
+          ok: true,
+          callbackId: updatedCallback.id,
+          processingStatus: updatedCallback.processing_status,
+          orderId: order.id,
+          orderUpdated: false,
+          error: unsafeReason,
+        },
+      };
+    }
+
+    const factoryFailure = normalized.status === 'failed';
+    const manualReviewReason = factoryFailure
+      ? 'factory_callback_failed'
+      : undefined;
+    const updatedOrder = await updateOrderFactoryState(
+      order.id,
+      {
+        factoryStatus: normalized.status,
+        factoryOrderId: normalized.factoryOrderId,
+        status: targetOrderStatus,
+        manualReviewReason,
+      },
+      connection
+    );
+    const callbackProcessingStatus = factoryFailure
+      ? FACTORY_CALLBACK_PROCESSING_STATUSES.MANUAL_REVIEW
+      : FACTORY_CALLBACK_PROCESSING_STATUSES.PROCESSED;
+    const updatedCallback = await updateFactoryCallbackProcessingStatus(
+      callback.id,
+      {
+        processingStatus: callbackProcessingStatus,
+        errorMessage: factoryFailure
+          ? 'factory_status_failed_requires_manual_review'
+          : null,
+        orderId: order.id,
+      },
+      connection
+    );
+    const shopifyUpdateTaskResult = await ensureShopifyUpdateTaskDryRun({
+      order: updatedOrder,
+      factoryCallback: updatedCallback,
       factoryStatus: normalized.status,
-      previousOrderStatus: order.status,
-      orderStatus: updatedOrder.status,
-      factoryOrderId: updatedOrder.factory_order_id,
-      deliveryId: normalized.deliveryId,
-      shopifyUpdateTaskId: shopifyUpdateTaskResult.task?.id ?? null,
-      shopifyUpdateTaskCreated: shopifyUpdateTaskResult.created,
-      shopifyUpdateTaskType:
-        shopifyUpdateTaskResult.task?.task_type ?? null,
-      shopifyUpdateSuppressed: Boolean(shopifyUpdateTaskResult.task),
-    },
-  });
+      factoryPayload: payload,
+      db: connection,
+      logCreation: false,
+    });
 
-  return {
-    httpStatus: factoryFailure ? 202 : 200,
-    body: {
-      ok: true,
-      callbackId: updatedCallback.id,
-      processingStatus: updatedCallback.processing_status,
+    await connection.commit();
+    transactionStarted = false;
+
+    await logInfo({
+      scopeType: 'order',
       orderId: updatedOrder.id,
-      orderUpdated: true,
-      factoryStatus: updatedOrder.factory_status,
-      orderStatus: updatedOrder.status,
-      shopifyUpdateTaskId: shopifyUpdateTaskResult.task?.id ?? null,
-      shopifyUpdateTaskCreated: shopifyUpdateTaskResult.created,
-      shopifyUpdateTaskType:
-        shopifyUpdateTaskResult.task?.task_type ?? null,
-      shopifyUpdateSuppressed: Boolean(shopifyUpdateTaskResult.task),
-    },
-  };
+      step: 'factory_callback.processed',
+      message: 'Factory callback simulation processed',
+      detailsJson: {
+        callbackId: updatedCallback.id,
+        factoryStatus: normalized.status,
+        previousOrderStatus: order.status,
+        orderStatus: updatedOrder.status,
+        factoryOrderId: updatedOrder.factory_order_id,
+        deliveryId: normalized.deliveryId,
+        shopifyUpdateTaskId: shopifyUpdateTaskResult.task?.id ?? null,
+        shopifyUpdateTaskCreated: shopifyUpdateTaskResult.created,
+        shopifyUpdateTaskType:
+          shopifyUpdateTaskResult.task?.task_type ?? null,
+        shopifyUpdateSuppressed: Boolean(shopifyUpdateTaskResult.task),
+      },
+    });
+
+    return {
+      httpStatus: factoryFailure ? 202 : 200,
+      body: {
+        ok: true,
+        callbackId: updatedCallback.id,
+        processingStatus: updatedCallback.processing_status,
+        orderId: updatedOrder.id,
+        orderUpdated: true,
+        factoryStatus: updatedOrder.factory_status,
+        orderStatus: updatedOrder.status,
+        shopifyUpdateTaskId: shopifyUpdateTaskResult.task?.id ?? null,
+        shopifyUpdateTaskCreated: shopifyUpdateTaskResult.created,
+        shopifyUpdateTaskType:
+          shopifyUpdateTaskResult.task?.task_type ?? null,
+        shopifyUpdateSuppressed: Boolean(shopifyUpdateTaskResult.task),
+      },
+    };
+  } catch (error) {
+    if (transactionStarted) {
+      await connection.rollback();
+      transactionStarted = false;
+    }
+
+    if (normalized.deliveryId && isDuplicateKeyError(error)) {
+      const originalCallback = await findOriginalFactoryCallbackByDeliveryId(
+        normalized.deliveryId
+      );
+
+      if (originalCallback) {
+        return buildDuplicateCallbackResult(originalCallback, normalized);
+      }
+    }
+
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 export default {

@@ -1,5 +1,6 @@
 import pool from '../db/connection.js';
 import { JOB_STATUSES } from '../constants/statuses.js';
+import { buildFactoryReference } from '../utils/factoryReference.js';
 
 function jsonForWrite(value) {
   if (value === undefined || value === null) {
@@ -106,6 +107,23 @@ export async function createJob(data, db = pool) {
       data.completedAt ?? data.completed_at ?? null,
     ]
   );
+
+  const shopifyOrderId =
+    data.shopifyOrderId ?? data.shopify_order_id ?? null;
+
+  if (shopifyOrderId !== null && shopifyOrderId !== undefined && shopifyOrderId !== '') {
+    const factoryReference = buildFactoryReference({
+      shopifyOrderId,
+      jobId: result.insertId,
+    });
+
+    await executor.execute(
+      `UPDATE jobs
+      SET factory_reference = COALESCE(factory_reference, ?)
+      WHERE id = ?`,
+      [factoryReference, result.insertId]
+    );
+  }
 
   return findJobById(result.insertId, executor);
 }

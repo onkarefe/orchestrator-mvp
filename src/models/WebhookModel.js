@@ -1,4 +1,5 @@
 import pool from '../db/connection.js';
+import { WEBHOOK_PROCESSING_STATUSES } from '../constants/statuses.js';
 
 function jsonForWrite(value) {
   if (value === undefined || value === null) {
@@ -106,9 +107,17 @@ export async function findWebhookByDeliveryId(deliveryId, db = pool) {
   const [rows] = await executor.execute(
     `SELECT * FROM webhooks
     WHERE delivery_id = ?
+      AND (hmac_valid = 1 OR hmac_valid IS NULL)
+      AND processing_status IN (?, ?, ?, ?)
     ORDER BY id ASC
     LIMIT 1`,
-    [deliveryId]
+    [
+      deliveryId,
+      WEBHOOK_PROCESSING_STATUSES.PENDING,
+      WEBHOOK_PROCESSING_STATUSES.PROCESSING,
+      WEBHOOK_PROCESSING_STATUSES.PROCESSED,
+      WEBHOOK_PROCESSING_STATUSES.DUPLICATE,
+    ]
   );
 
   return normalizeWebhook(rows[0]);

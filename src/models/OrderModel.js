@@ -80,10 +80,30 @@ export async function findOrderById(id, db = pool) {
   return normalizeOrder(rows[0]);
 }
 
+export async function findOrderByIdForUpdate(id, db) {
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
+    'SELECT * FROM orders WHERE id = ? LIMIT 1 FOR UPDATE',
+    [id]
+  );
+
+  return normalizeOrder(rows[0]);
+}
+
 export async function findOrderByShopifyOrderId(shopifyOrderId, db = pool) {
   const executor = getExecutor(db);
   const [rows] = await executor.execute(
     'SELECT * FROM orders WHERE shopify_order_id = ? LIMIT 1',
+    [shopifyOrderId]
+  );
+
+  return normalizeOrder(rows[0]);
+}
+
+export async function findOrderByShopifyOrderIdForUpdate(shopifyOrderId, db) {
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
+    'SELECT * FROM orders WHERE shopify_order_id = ? LIMIT 1 FOR UPDATE',
     [shopifyOrderId]
   );
 
@@ -102,6 +122,24 @@ export async function findOrderByFactoryOrderId(factoryOrderId, db = pool) {
   const executor = getExecutor(db);
   const [rows] = await executor.execute(
     'SELECT * FROM orders WHERE factory_order_id = ? LIMIT 1',
+    [factoryOrderId]
+  );
+
+  return normalizeOrder(rows[0]);
+}
+
+export async function findOrderByFactoryOrderIdForUpdate(factoryOrderId, db) {
+  if (
+    factoryOrderId === null ||
+    factoryOrderId === undefined ||
+    factoryOrderId === ''
+  ) {
+    return null;
+  }
+
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
+    'SELECT * FROM orders WHERE factory_order_id = ? LIMIT 1 FOR UPDATE',
     [factoryOrderId]
   );
 
@@ -206,8 +244,11 @@ export async function updateOrderManualReview(
 export default {
   createOrder,
   findOrderById,
+  findOrderByIdForUpdate,
   findOrderByFactoryOrderId,
+  findOrderByFactoryOrderIdForUpdate,
   findOrderByShopifyOrderId,
+  findOrderByShopifyOrderIdForUpdate,
   listOrders,
   updateOrderFactoryState,
   updateOrderStatus,

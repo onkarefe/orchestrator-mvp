@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS orders (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  KEY idx_orders_shopify_order_id (shopify_order_id),
+  UNIQUE KEY uq_orders_shopify_order_id (shopify_order_id),
   KEY idx_orders_shopify_order_number (shopify_order_number),
   KEY idx_orders_status (status),
   KEY idx_orders_factory_status (factory_status),
@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   order_id BIGINT UNSIGNED NULL,
   shopify_order_id VARCHAR(191) NULL,
   shopify_line_item_id VARCHAR(191) NULL,
+  factory_reference VARCHAR(191) NULL,
   product_title VARCHAR(255) NULL,
   variant_title VARCHAR(255) NULL,
   sku VARCHAR(191) NULL,
@@ -56,7 +57,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   KEY idx_jobs_order_id (order_id),
   KEY idx_jobs_status (status),
   KEY idx_jobs_shopify_order_id (shopify_order_id),
-  KEY idx_jobs_shopify_order_line_item (shopify_order_id, shopify_line_item_id),
+  UNIQUE KEY uq_jobs_shopify_order_line_item (shopify_order_id, shopify_line_item_id),
+  UNIQUE KEY uq_jobs_factory_reference (factory_reference),
   KEY idx_jobs_shopify_line_item_id (shopify_line_item_id),
   KEY idx_jobs_locked_at (locked_at),
   KEY idx_jobs_status_locked_at (status, locked_at),
@@ -72,6 +74,16 @@ CREATE TABLE IF NOT EXISTS webhooks (
   status VARCHAR(50) NOT NULL DEFAULT 'received',
   processing_status VARCHAR(50) NOT NULL DEFAULT 'pending',
   hmac_valid TINYINT(1) NULL,
+  dedupe_delivery_id VARCHAR(191) GENERATED ALWAYS AS (
+    CASE
+      WHEN delivery_id IS NOT NULL
+        AND delivery_id <> ''
+        AND (hmac_valid = 1 OR hmac_valid IS NULL)
+        AND processing_status IN ('pending', 'processing', 'processed')
+      THEN delivery_id
+      ELSE NULL
+    END
+  ) STORED,
   duplicate_of_id BIGINT UNSIGNED NULL,
   headers_json JSON NULL,
   raw_payload_json JSON NULL,
@@ -87,6 +99,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
   KEY idx_webhooks_processing_status (processing_status),
   KEY idx_webhooks_shopify_order_id (shopify_order_id),
   KEY idx_webhooks_delivery_id (delivery_id),
+  UNIQUE KEY uq_webhooks_provider_dedupe_delivery (provider, dedupe_delivery_id),
   KEY idx_webhooks_duplicate_of_id (duplicate_of_id),
   CONSTRAINT fk_webhooks_duplicate_of_id FOREIGN KEY (duplicate_of_id) REFERENCES webhooks (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -143,6 +156,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
 
 CREATE TABLE IF NOT EXISTS factory_callbacks (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  provider VARCHAR(100) NOT NULL DEFAULT 'factory_simulation',
   order_id BIGINT UNSIGNED NULL,
   shopify_order_id VARCHAR(191) NULL,
   order_number VARCHAR(191) NULL,
@@ -154,6 +168,16 @@ CREATE TABLE IF NOT EXISTS factory_callbacks (
   auth_valid TINYINT(1) NULL,
   duplicate_of_id BIGINT UNSIGNED NULL,
   processing_status VARCHAR(50) NOT NULL DEFAULT 'received',
+  dedupe_delivery_id VARCHAR(191) GENERATED ALWAYS AS (
+    CASE
+      WHEN delivery_id IS NOT NULL
+        AND delivery_id <> ''
+        AND (auth_valid = 1 OR auth_valid IS NULL)
+        AND processing_status IN ('received', 'processing', 'processed')
+      THEN delivery_id
+      ELSE NULL
+    END
+  ) STORED,
   error_message TEXT NULL,
   received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -163,6 +187,7 @@ CREATE TABLE IF NOT EXISTS factory_callbacks (
   KEY idx_factory_callbacks_shopify_order_id (shopify_order_id),
   KEY idx_factory_callbacks_factory_order_id (factory_order_id),
   KEY idx_factory_callbacks_delivery_id (delivery_id),
+  UNIQUE KEY uq_factory_callbacks_provider_dedupe_delivery (provider, dedupe_delivery_id),
   KEY idx_factory_callbacks_status (status),
   KEY idx_factory_callbacks_processing_status (processing_status),
   KEY idx_factory_callbacks_duplicate_of_id (duplicate_of_id),
@@ -175,8 +200,12 @@ CREATE TABLE IF NOT EXISTS shopify_update_tasks (
   order_id BIGINT UNSIGNED NULL,
   shopify_order_id VARCHAR(191) NULL,
   task_type VARCHAR(100) NOT NULL,
+  idempotency_key VARCHAR(191) NULL,
+  source_type VARCHAR(100) NULL,
+  source_id VARCHAR(191) NULL,
   status VARCHAR(50) NOT NULL DEFAULT 'pending',
   payload_json JSON NULL,
+  result_json JSON NULL,
   dry_run TINYINT(1) NOT NULL DEFAULT 1,
   attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
   max_attempts INT UNSIGNED NOT NULL DEFAULT 3,
@@ -192,6 +221,8 @@ CREATE TABLE IF NOT EXISTS shopify_update_tasks (
   KEY idx_shopify_update_tasks_status (status),
   KEY idx_shopify_update_tasks_status_locked_at (status, locked_at),
   KEY idx_shopify_update_tasks_task_type (task_type),
+  UNIQUE KEY uq_shopify_update_tasks_idempotency_key (idempotency_key),
+  KEY idx_shopify_update_tasks_source (source_type, source_id),
   CONSTRAINT fk_shopify_update_tasks_order_id FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

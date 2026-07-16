@@ -39,6 +39,14 @@
         <dd class="mono"><%= display(shopifyUpdateTask.task_type) %></dd>
       </div>
       <div class="meta-item">
+        <dt>Idempotency key</dt>
+        <dd class="mono"><%= display(shopifyUpdateTask.idempotency_key) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Source</dt>
+        <dd class="mono"><%= display(shopifyUpdateTask.source_type) %> / <%= display(shopifyUpdateTask.source_id) %></dd>
+      </div>
+      <div class="meta-item">
         <dt>Status</dt>
         <dd><span class="status-badge <%= statusClass(shopifyUpdateTask.status) %>"><%= display(shopifyUpdateTask.status) %></span></dd>
       </div>
@@ -70,5 +78,16 @@
       <span class="disclosure-hint">Show payload</span>
     </summary>
     <pre class="code-panel"><%= payloadJson || '{}' %></pre>
+  </details>
+
+  <details class="card disclosure">
+    <summary>
+      <span>
+        <span class="section-label">Executor data</span>
+        <strong>Redacted result payload</strong>
+      </span>
+      <span class="disclosure-hint">Show result</span>
+    </summary>
+    <pre class="code-panel"><%= resultJson || '{}' %></pre>
   </details>
 </section>

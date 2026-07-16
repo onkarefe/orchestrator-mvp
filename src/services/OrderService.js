@@ -1,5 +1,6 @@
 import { ORDER_STATUSES } from '../constants/statuses.js';
 import pool from '../db/connection.js';
+import { isDuplicateKeyError } from '../db/errors.js';
 import {
   createOrder,
   findOrderByShopifyOrderId,
@@ -279,6 +280,33 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
   } catch (error) {
     if (transactionStarted) {
       await connection.rollback();
+      transactionStarted = false;
+    }
+
+    if (isDuplicateKeyError(error)) {
+      const existingOrder = await findOrderByShopifyOrderId(shopifyOrderId);
+
+      if (existingOrder) {
+        await logInfo({
+          scopeType: 'order',
+          orderId: existingOrder.id,
+          step: 'order.concurrent_duplicate_shopify_order',
+          message: 'Concurrent duplicate Shopify order ignored',
+          detailsJson: {
+            shopifyOrderId,
+            shopifyOrderNumber: existingOrder.shopify_order_number,
+          },
+        });
+
+        return {
+          order: existingOrder,
+          jobs: [],
+          created: false,
+          duplicate: true,
+          skippedDuplicateJobs: [],
+          manualReviewJobs: [],
+        };
+      }
     }
 
     await logError({

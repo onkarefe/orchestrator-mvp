@@ -81,7 +81,9 @@ export async function markWebhookDuplicate(
 ) {
   const webhook = await updateWebhookDuplicate(id, {
     status: WEBHOOK_PROCESSING_STATUSES.DUPLICATE,
-    processingStatus: WEBHOOK_PROCESSING_STATUSES.DUPLICATE,
+    // Keep the canonical delivery dedupe-eligible while retaining the
+    // user-facing duplicate outcome in status.
+    processingStatus: WEBHOOK_PROCESSING_STATUSES.PROCESSED,
     duplicateOfId,
     errorMessage,
   });

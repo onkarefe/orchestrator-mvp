@@ -1,5 +1,3 @@
-import env from '../config/env.js';
-
 export const REDACTED_VALUE = '[REDACTED]';
 export const CIRCULAR_VALUE = '[Circular]';
 
@@ -8,6 +6,10 @@ const EXACT_SENSITIVE_KEYS = Object.freeze(
     'authorization',
     'cookie',
     'set_cookie',
+    'x_api_key',
+    'x_factory_callback_api_key',
+    'x_nexo_api_key',
+    'x_nexo_callback_api_key',
     'x_shopify_hmac_sha256',
     'x_shopify_access_token',
     'api_key',
@@ -20,6 +22,8 @@ const EXACT_SENSITIVE_KEYS = Object.freeze(
 );
 
 const SENSITIVE_KEY_FRAGMENTS = Object.freeze([
+  'api_key',
+  'apikey',
   'token',
   'secret',
   'password',
@@ -113,12 +117,12 @@ function cloneWithOptionalRedaction(value, { redactSecrets }, seen) {
   return result;
 }
 
-export function redact(value, options = {}) {
-  const redactSecrets = options.redactSecrets ?? env.LOG_REDACT_SECRETS;
-
+export function redact(value, _options = {}) {
+  // Secret redaction is deliberately fail-closed. The options argument is
+  // retained for API compatibility, but known secret keys are always masked.
   return cloneWithOptionalRedaction(
     value,
-    { redactSecrets },
+    { redactSecrets: true },
     new WeakMap()
   );
 }

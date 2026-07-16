@@ -74,6 +74,7 @@ export function buildArtifactManifest({
       id: job?.id ?? null,
       shopify_order_id: job?.shopify_order_id ?? shopifyOrderId ?? null,
       shopify_line_item_id: job?.shopify_line_item_id ?? null,
+      factory_reference: job?.factory_reference ?? null,
       source_master_asset_id: job?.master_asset_id ?? null,
       output_width_mm: widthMm,
       output_height_mm: heightMm,

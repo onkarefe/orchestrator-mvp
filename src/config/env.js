@@ -36,6 +36,33 @@ function integerFromEnv(name, defaultValue, { min = 0 } = {}) {
   return parsed;
 }
 
+function positiveNumberFromEnv(name, defaultValue) {
+  const value = process.env[name];
+
+  if (value === undefined || value === null || value === '') {
+    return defaultValue;
+  }
+
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
+}
+
+function csvFromEnv(name, defaultValue = []) {
+  const value = process.env[name];
+
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return [...defaultValue];
+  }
+
+  const values = String(value)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return values.length ? values : [...defaultValue];
+}
+
 const env = {
   PORT: Number(process.env.PORT || 3000),
   DB_HOST: process.env.DB_HOST || '127.0.0.1',
@@ -66,6 +93,22 @@ const env = {
   SHOPIFY_WEBHOOK_STORE_INVALID: booleanFromEnv(
     'SHOPIFY_WEBHOOK_STORE_INVALID',
     true
+  ),
+  CONFIGURATOR_REQUIRED_SKU_PREFIXES: csvFromEnv(
+    'CONFIGURATOR_REQUIRED_SKU_PREFIXES',
+    ['wandini-']
+  ),
+  CONFIGURATOR_MAX_OUTPUT_WIDTH_MM: positiveNumberFromEnv(
+    'CONFIGURATOR_MAX_OUTPUT_WIDTH_MM',
+    20000
+  ),
+  CONFIGURATOR_MAX_OUTPUT_HEIGHT_MM: positiveNumberFromEnv(
+    'CONFIGURATOR_MAX_OUTPUT_HEIGHT_MM',
+    5000
+  ),
+  CONFIGURATOR_MAX_OUTPUT_AREA_M2: positiveNumberFromEnv(
+    'CONFIGURATOR_MAX_OUTPUT_AREA_M2',
+    100
   ),
   FTP_UPLOAD_ENABLED: booleanFromEnv('FTP_UPLOAD_ENABLED', false),
   SHOPIFY_WRITE_ENABLED: booleanFromEnv('SHOPIFY_WRITE_ENABLED', false),

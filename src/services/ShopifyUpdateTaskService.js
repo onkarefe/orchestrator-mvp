@@ -1,4 +1,5 @@
 import env from '../config/env.js';
+import { isDuplicateKeyError } from '../db/errors.js';
 import {
   FACTORY_CALLBACK_PROCESSING_STATUSES,
   SHOPIFY_UPDATE_TASK_STATUSES,
@@ -6,6 +7,7 @@ import {
 import {
   createShopifyUpdateTask,
   findShopifyUpdateTaskByFactoryCallbackId,
+  findShopifyUpdateTaskByIdempotencyKey,
 } from '../models/ShopifyUpdateTaskModel.js';
 import { redact } from '../utils/redact.js';
 import { logInfo } from './LogService.js';
@@ -127,9 +129,12 @@ export function buildShopifyUpdateTaskDraft({
     return null;
   }
 
+  const idempotencyKey = `factory_callback:${factoryCallback.id}:${taskType}`;
+
   const payload = {
     source: 'factory_callback_simulation',
     taskType,
+    idempotencyKey,
     factoryCallbackId: String(factoryCallback.id),
     factoryCallbackStatus: factoryCallback.processing_status ?? null,
     factoryStatus,
@@ -157,6 +162,9 @@ export function buildShopifyUpdateTaskDraft({
     orderId: order.id,
     shopifyOrderId: order.shopify_order_id ?? null,
     taskType,
+    idempotencyKey,
+    sourceType: 'factory_callback',
+    sourceId: String(factoryCallback.id),
     status: SHOPIFY_UPDATE_TASK_STATUSES.PENDING,
     dryRun: true,
     payloadJson: redact(payload),
@@ -168,6 +176,8 @@ export async function ensureShopifyUpdateTaskDryRun({
   factoryCallback,
   factoryStatus,
   factoryPayload = {},
+  db = undefined,
+  logCreation = true,
 } = {}) {
   const draft = buildShopifyUpdateTaskDraft({
     order,
@@ -184,9 +194,12 @@ export async function ensureShopifyUpdateTaskDryRun({
     };
   }
 
-  const existingTask = await findShopifyUpdateTaskByFactoryCallbackId(
-    factoryCallback.id
-  );
+  const existingTask =
+    (await findShopifyUpdateTaskByIdempotencyKey(
+      draft.idempotencyKey,
+      db
+    )) ??
+    (await findShopifyUpdateTaskByFactoryCallbackId(factoryCallback.id, db));
 
   if (existingTask) {
     return {
@@ -196,23 +209,48 @@ export async function ensureShopifyUpdateTaskDryRun({
     };
   }
 
-  const task = await createShopifyUpdateTask(draft);
+  let task = null;
 
-  await logInfo({
-    scopeType: 'order',
-    orderId: task.order_id,
-    step: 'shopify_update_task.created',
-    message: 'Dry-run Shopify update task created',
-    detailsJson: {
-      taskId: task.id,
-      taskType: task.task_type,
-      factoryCallbackId: factoryCallback.id,
-      factoryStatus,
-      dryRun: task.dry_run,
-      shopifyWriteEnabled: env.SHOPIFY_WRITE_ENABLED,
-      actualShopifyWriteImplemented: false,
-    },
-  });
+  try {
+    task = await createShopifyUpdateTask(draft, db);
+  } catch (error) {
+    if (!isDuplicateKeyError(error)) {
+      throw error;
+    }
+
+    task = await findShopifyUpdateTaskByIdempotencyKey(
+      draft.idempotencyKey,
+      db
+    );
+
+    if (!task) {
+      throw error;
+    }
+
+    return {
+      task,
+      created: false,
+      reason: 'shopify_update_task_already_exists',
+    };
+  }
+
+  if (logCreation) {
+    await logInfo({
+      scopeType: 'order',
+      orderId: task.order_id,
+      step: 'shopify_update_task.created',
+      message: 'Dry-run Shopify update task created',
+      detailsJson: {
+        taskId: task.id,
+        taskType: task.task_type,
+        factoryCallbackId: factoryCallback.id,
+        factoryStatus,
+        dryRun: task.dry_run,
+        shopifyWriteEnabled: env.SHOPIFY_WRITE_ENABLED,
+        actualShopifyWriteImplemented: false,
+      },
+    });
+  }
 
   return {
     task,

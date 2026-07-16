@@ -59,6 +59,7 @@ export async function createFactoryCallback(data, db = pool) {
   const executor = getExecutor(db);
   const [result] = await executor.execute(
     `INSERT INTO factory_callbacks (
+      provider,
       order_id,
       shopify_order_id,
       order_number,
@@ -71,8 +72,9 @@ export async function createFactoryCallback(data, db = pool) {
       duplicate_of_id,
       processing_status,
       error_message
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      data.provider ?? 'factory_simulation',
       data.orderId ?? data.order_id ?? null,
       data.shopifyOrderId ?? data.shopify_order_id ?? null,
       data.orderNumber ?? data.order_number ?? null,
@@ -116,7 +118,8 @@ export async function listFactoryCallbacks({ limit, offset } = {}) {
 
 export async function findOriginalFactoryCallbackByDeliveryId(
   deliveryId,
-  db = pool
+  db = pool,
+  provider = 'factory_simulation'
 ) {
   if (deliveryId === null || deliveryId === undefined || deliveryId === '') {
     return null;
@@ -125,12 +128,19 @@ export async function findOriginalFactoryCallbackByDeliveryId(
   const executor = getExecutor(db);
   const [rows] = await executor.execute(
     `SELECT * FROM factory_callbacks
-    WHERE delivery_id = ?
+    WHERE provider = ?
+      AND delivery_id = ?
       AND (auth_valid = 1 OR auth_valid IS NULL)
-      AND processing_status <> ?
+      AND processing_status IN (?, ?, ?)
     ORDER BY id ASC
     LIMIT 1`,
-    [deliveryId, FACTORY_CALLBACK_PROCESSING_STATUSES.FAILED]
+    [
+      provider,
+      deliveryId,
+      FACTORY_CALLBACK_PROCESSING_STATUSES.RECEIVED,
+      FACTORY_CALLBACK_PROCESSING_STATUSES.PROCESSING,
+      FACTORY_CALLBACK_PROCESSING_STATUSES.PROCESSED,
+    ]
   );
 
   return normalizeFactoryCallback(rows[0]);

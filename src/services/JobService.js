@@ -1,4 +1,5 @@
 import { JOB_STATUSES } from '../constants/statuses.js';
+import { isDuplicateKeyError } from '../db/errors.js';
 import {
   createJob,
   findJobByShopifyOrderAndLineItem,
@@ -24,6 +25,37 @@ function formatManualReviewReason(validation) {
   return validation.errors.length
     ? validation.errors.join(', ')
     : validation.reason;
+}
+
+async function createJobWithDuplicateFallback(
+  jobData,
+  { shopifyOrderId, shopifyLineItemId, db }
+) {
+  try {
+    return {
+      job: await createJob(jobData, db),
+      duplicate: false,
+    };
+  } catch (error) {
+    if (!isDuplicateKeyError(error)) {
+      throw error;
+    }
+
+    const existingJob = await findJobByShopifyOrderAndLineItem(
+      shopifyOrderId,
+      shopifyLineItemId,
+      db
+    );
+
+    if (!existingJob) {
+      throw error;
+    }
+
+    return {
+      job: existingJob,
+      duplicate: true,
+    };
+  }
 }
 
 export async function createConfiguratorJobFromLineItem(
@@ -69,7 +101,7 @@ export async function createConfiguratorJobFromLineItem(
     : formatManualReviewReason(validation);
 
   if (!validation.ok) {
-    const job = await createJob(
+    const creationResult = await createJobWithDuplicateFallback(
       {
         orderId,
         shopifyOrderId,
@@ -93,11 +125,23 @@ export async function createConfiguratorJobFromLineItem(
           },
         },
       },
-      db
+      { shopifyOrderId, shopifyLineItemId, db }
     );
 
+    if (creationResult.duplicate) {
+      return {
+        job: creationResult.job,
+        created: false,
+        duplicate: true,
+        manualReview:
+          creationResult.job.status === JOB_STATUSES.MANUAL_REVIEW,
+        reason: 'duplicate_line_item',
+        errors: [],
+      };
+    }
+
     return {
-      job,
+      job: creationResult.job,
       created: true,
       duplicate: false,
       manualReview: true,
@@ -106,7 +150,7 @@ export async function createConfiguratorJobFromLineItem(
     };
   }
 
-  const job = await createJob(
+  const creationResult = await createJobWithDuplicateFallback(
     {
       orderId,
       shopifyOrderId,
@@ -129,11 +173,22 @@ export async function createConfiguratorJobFromLineItem(
       },
       status: JOB_STATUSES.PENDING,
     },
-    db
+    { shopifyOrderId, shopifyLineItemId, db }
   );
 
+  if (creationResult.duplicate) {
+    return {
+      job: creationResult.job,
+      created: false,
+      duplicate: true,
+      manualReview: creationResult.job.status === JOB_STATUSES.MANUAL_REVIEW,
+      reason: 'duplicate_line_item',
+      errors: [],
+    };
+  }
+
   return {
-    job,
+    job: creationResult.job,
     created: true,
     duplicate: false,
     manualReview: false,

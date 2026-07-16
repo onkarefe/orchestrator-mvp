@@ -64,6 +64,7 @@ const ShopifyUpdateTaskController = {
         title,
         shopifyUpdateTask,
         payloadJson: prettyJson(shopifyUpdateTask.payload_json),
+        resultJson: prettyJson(shopifyUpdateTask.result_json),
       });
     } catch (error) {
       next(error);

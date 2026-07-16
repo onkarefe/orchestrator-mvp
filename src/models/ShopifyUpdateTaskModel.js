@@ -38,6 +38,7 @@ function normalizeShopifyUpdateTask(row) {
     ...row,
     dry_run: Boolean(row.dry_run),
     payload_json: parseJson(row.payload_json),
+    result_json: parseJson(row.result_json),
   };
 }
 
@@ -62,22 +63,30 @@ export async function createShopifyUpdateTask(data, db = pool) {
       order_id,
       shopify_order_id,
       task_type,
+      idempotency_key,
+      source_type,
+      source_id,
       status,
       payload_json,
+      result_json,
       dry_run,
       attempt_count,
       max_attempts,
       last_error
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.orderId ?? data.order_id ?? null,
       data.shopifyOrderId ?? data.shopify_order_id ?? null,
       data.taskType ?? data.task_type,
+      data.idempotencyKey ?? data.idempotency_key ?? null,
+      data.sourceType ?? data.source_type ?? null,
+      data.sourceId ?? data.source_id ?? null,
       data.status ??
         data.processingStatus ??
         data.processing_status ??
         SHOPIFY_UPDATE_TASK_STATUSES.PENDING,
       jsonForWrite(data.payloadJson ?? data.payload_json ?? null),
+      jsonForWrite(data.resultJson ?? data.result_json ?? null),
       tinyIntForWrite(data.dryRun ?? data.dry_run ?? true),
       data.attemptCount ?? data.attempt_count ?? 0,
       data.maxAttempts ?? data.max_attempts ?? 3,
@@ -93,6 +102,29 @@ export async function findShopifyUpdateTaskById(id, db = pool) {
   const [rows] = await executor.execute(
     'SELECT * FROM shopify_update_tasks WHERE id = ? LIMIT 1',
     [id]
+  );
+
+  return normalizeShopifyUpdateTask(rows[0]);
+}
+
+export async function findShopifyUpdateTaskByIdempotencyKey(
+  idempotencyKey,
+  db = pool
+) {
+  if (
+    idempotencyKey === null ||
+    idempotencyKey === undefined ||
+    idempotencyKey === ''
+  ) {
+    return null;
+  }
+
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
+    `SELECT * FROM shopify_update_tasks
+    WHERE idempotency_key = ?
+    LIMIT 1`,
+    [String(idempotencyKey)]
   );
 
   return normalizeShopifyUpdateTask(rows[0]);
@@ -136,6 +168,7 @@ export async function findShopifyUpdateTaskByFactoryCallbackId(
 export default {
   createShopifyUpdateTask,
   findShopifyUpdateTaskById,
+  findShopifyUpdateTaskByIdempotencyKey,
   listShopifyUpdateTasks,
   findShopifyUpdateTaskByFactoryCallbackId,
 };

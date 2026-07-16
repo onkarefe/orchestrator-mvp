@@ -1,5 +1,6 @@
 import env from '../../config/env.js';
 import { WEBHOOK_PROCESSING_STATUSES } from '../../constants/statuses.js';
+import { isDuplicateKeyError } from '../../db/errors.js';
 import {
   getWebhookByDeliveryId,
   markWebhookFailed,
@@ -44,6 +45,18 @@ function getShopifyDeliveryId(req) {
   const deliveryId = req.get('x-shopify-webhook-id');
 
   return deliveryId ? String(deliveryId).trim() || null : null;
+}
+
+function sendDuplicateDeliveryResponse(res, originalWebhook) {
+  res.status(200).json({
+    ok: true,
+    status: WEBHOOK_PROCESSING_STATUSES.DUPLICATE,
+    duplicate: true,
+    webhookId: originalWebhook.id,
+    duplicateOfId: originalWebhook.id,
+    orderId: null,
+    jobCount: 0,
+  });
 }
 
 async function recordRejectedWebhook({
@@ -167,38 +180,7 @@ export async function recordOrdersPaidWebhook(req, res) {
     }
 
     if (originalWebhook) {
-      let duplicateWebhook = null;
-
-      try {
-        duplicateWebhook = await recordWebhook({
-          provider: 'shopify',
-          topic: 'orders/paid',
-          shopifyOrderId: payload?.id ?? null,
-          deliveryId,
-          status: 'received',
-          processingStatus: WEBHOOK_PROCESSING_STATUSES.DUPLICATE,
-          hmacValid: hmacWasChecked ? hmacValid : null,
-          duplicateOfId: originalWebhook.id,
-          headersJson: redact(req.headers),
-          rawPayloadJson: payload,
-          errorMessage: 'Duplicate Shopify webhook delivery',
-        });
-      } catch (error) {
-        console.error(
-          'Duplicate Shopify webhook recording failed:',
-          safeErrorForLog(error)
-        );
-      }
-
-      res.status(200).json({
-        ok: true,
-        status: WEBHOOK_PROCESSING_STATUSES.DUPLICATE,
-        duplicate: true,
-        webhookId: duplicateWebhook?.id ?? null,
-        duplicateOfId: originalWebhook.id,
-        orderId: null,
-        jobCount: 0,
-      });
+      sendDuplicateDeliveryResponse(res, originalWebhook);
       return;
     }
   }
@@ -216,6 +198,22 @@ export async function recordOrdersPaidWebhook(req, res) {
       rawPayloadJson: payload,
     });
   } catch (error) {
+    if (deliveryId && isDuplicateKeyError(error)) {
+      try {
+        const originalWebhook = await getWebhookByDeliveryId(deliveryId);
+
+        if (originalWebhook) {
+          sendDuplicateDeliveryResponse(res, originalWebhook);
+          return;
+        }
+      } catch (lookupError) {
+        console.error(
+          'Concurrent Shopify webhook duplicate lookup failed:',
+          safeErrorForLog(lookupError)
+        );
+      }
+    }
+
     console.error('Shopify webhook recording failed:', safeErrorForLog(error));
 
     res.status(500).json({
