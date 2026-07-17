@@ -165,6 +165,58 @@ export async function findJobByShopifyOrderAndLineItem(
   return normalizeJob(rows[0]);
 }
 
+export async function findJobByFactoryReferenceForUpdate(factoryReference, db) {
+  if (!factoryReference) {
+    return null;
+  }
+
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
+    `SELECT * FROM jobs
+    WHERE factory_reference = ?
+    LIMIT 1
+    FOR UPDATE`,
+    [factoryReference]
+  );
+
+  return normalizeJob(rows[0]);
+}
+
+export async function findJobByNexoJobIdForUpdate(nexoJobId, db) {
+  if (!nexoJobId) {
+    return null;
+  }
+
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
+    `SELECT * FROM jobs
+    WHERE nexo_job_id = ?
+    LIMIT 1
+    FOR UPDATE`,
+    [nexoJobId]
+  );
+
+  return normalizeJob(rows[0]);
+}
+
+export async function updateJobNexoState(
+  id,
+  { nexoJobId, nexoStatus },
+  db = pool
+) {
+  const executor = getExecutor(db);
+
+  await executor.execute(
+    `UPDATE jobs
+    SET nexo_job_id = COALESCE(NULLIF(nexo_job_id, ''), ?),
+      nexo_status = ?
+    WHERE id = ?`,
+    [nexoJobId, nexoStatus, id]
+  );
+
+  return findJobById(id, executor);
+}
+
 export async function listJobs({ status, orderId, limit, offset } = {}) {
   const params = [];
   const conditions = [];
@@ -450,6 +502,9 @@ export default {
   createJob,
   findJobById,
   findJobByShopifyOrderAndLineItem,
+  findJobByFactoryReferenceForUpdate,
+  findJobByNexoJobIdForUpdate,
+  updateJobNexoState,
   listJobs,
   claimNextPendingJob,
   claimPendingJobById,

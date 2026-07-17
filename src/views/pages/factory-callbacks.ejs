@@ -13,7 +13,7 @@
     <div>
       <p class="eyebrow">Factory</p>
       <h1>Factory callbacks</h1>
-      <p class="page-description">Recent simulated factory/NEXO callback attempts.</p>
+      <p class="page-description">Recent factory simulation and NEXO callback attempts.</p>
     </div>
   </header>
 
@@ -30,11 +30,15 @@
         <thead>
           <tr>
             <th scope="col">ID</th>
+            <th scope="col">Provider</th>
             <th scope="col">Order</th>
+            <th scope="col">Job</th>
+            <th scope="col">Reference</th>
             <th scope="col">Shopify order</th>
-            <th scope="col">Factory order</th>
+            <th scope="col">Factory/NEXO job</th>
             <th scope="col">Delivery</th>
             <th scope="col">Factory status</th>
+            <th scope="col">Tracking</th>
             <th scope="col">Auth</th>
             <th scope="col">Duplicate of</th>
             <th scope="col">Processing</th>
@@ -46,13 +50,14 @@
         <tbody>
           <% if (factoryCallbacks.length === 0) { %>
             <tr>
-              <td class="empty-state" colspan="12">No factory callbacks recorded yet.</td>
+              <td class="empty-state" colspan="16">No factory callbacks recorded yet.</td>
             </tr>
           <% } %>
 
           <% factoryCallbacks.forEach((factoryCallback) => { %>
             <tr>
               <td><a class="primary-link mono" href="/admin/factory-callbacks/<%= factoryCallback.id %>">#<%= factoryCallback.id %></a></td>
+              <td class="mono"><%= display(factoryCallback.provider) %></td>
               <td class="mono">
                 <% if (factoryCallback.order_id) { %>
                   <a class="secondary-link mono" href="/admin/orders/<%= factoryCallback.order_id %>">#<%= factoryCallback.order_id %></a>
@@ -60,10 +65,19 @@
                   -
                 <% } %>
               </td>
+              <td class="mono">
+                <% if (factoryCallback.job_id) { %>
+                  <a class="secondary-link mono" href="/admin/jobs/<%= factoryCallback.job_id %>">#<%= factoryCallback.job_id %></a>
+                <% } else { %>
+                  -
+                <% } %>
+              </td>
+              <td class="mono"><%= display(factoryCallback.factory_reference) %></td>
               <td class="mono"><%= display(factoryCallback.shopify_order_id) %></td>
               <td class="mono"><%= display(factoryCallback.factory_order_id) %></td>
               <td class="mono"><%= display(factoryCallback.delivery_id) %></td>
               <td><span class="status-badge <%= statusClass(factoryCallback.status) %>"><%= display(factoryCallback.status) %></span></td>
+              <td><%= display(factoryCallback.tracking_count) %></td>
               <td><span class="status-badge status-neutral"><%= booleanLabel(factoryCallback.auth_valid) %></span></td>
               <td class="mono"><%= display(factoryCallback.duplicate_of_id) %></td>
               <td><span class="status-badge <%= statusClass(factoryCallback.processing_status) %>"><%= display(factoryCallback.processing_status) %></span></td>

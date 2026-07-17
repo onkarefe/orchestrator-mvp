@@ -30,15 +30,27 @@
     </div>
     <dl class="meta-grid meta-grid-three">
       <div class="meta-item">
+        <dt>Provider</dt>
+        <dd class="mono"><%= display(factoryCallback.provider) %></dd>
+      </div>
+      <div class="meta-item">
         <dt>Order ID</dt>
         <dd class="mono"><%= display(factoryCallback.order_id) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Job ID</dt>
+        <dd class="mono"><%= display(factoryCallback.job_id) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Factory reference</dt>
+        <dd class="mono"><%= display(factoryCallback.factory_reference) %></dd>
       </div>
       <div class="meta-item">
         <dt>Shopify order ID</dt>
         <dd class="mono"><%= display(factoryCallback.shopify_order_id) %></dd>
       </div>
       <div class="meta-item">
-        <dt>Factory order ID</dt>
+        <dt><%= factoryCallback.provider === 'nexo' ? 'NEXO job ID' : 'Factory order ID' %></dt>
         <dd class="mono"><%= display(factoryCallback.factory_order_id) %></dd>
       </div>
       <div class="meta-item">
@@ -48,6 +60,10 @@
       <div class="meta-item">
         <dt>Factory status</dt>
         <dd><span class="status-badge <%= statusClass(factoryCallback.status) %>"><%= display(factoryCallback.status) %></span></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Tracking count</dt>
+        <dd><%= display(factoryCallback.tracking_count) %></dd>
       </div>
       <div class="meta-item">
         <dt>Auth valid</dt>

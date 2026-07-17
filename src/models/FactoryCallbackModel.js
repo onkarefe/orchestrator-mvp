@@ -61,26 +61,32 @@ export async function createFactoryCallback(data, db = pool) {
     `INSERT INTO factory_callbacks (
       provider,
       order_id,
+      job_id,
+      factory_reference,
       shopify_order_id,
       order_number,
       factory_order_id,
       delivery_id,
       status,
+      tracking_count,
       raw_payload_json,
       headers_json,
       auth_valid,
       duplicate_of_id,
       processing_status,
       error_message
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.provider ?? 'factory_simulation',
       data.orderId ?? data.order_id ?? null,
+      data.jobId ?? data.job_id ?? null,
+      data.factoryReference ?? data.factory_reference ?? null,
       data.shopifyOrderId ?? data.shopify_order_id ?? null,
       data.orderNumber ?? data.order_number ?? null,
       data.factoryOrderId ?? data.factory_order_id ?? null,
       data.deliveryId ?? data.delivery_id ?? null,
       data.status ?? null,
+      data.trackingCount ?? data.tracking_count ?? 0,
       jsonForWrite(data.rawPayloadJson ?? data.raw_payload_json ?? null),
       jsonForWrite(data.headersJson ?? data.headers_json ?? null),
       tinyIntForWrite(data.authValid ?? data.auth_valid ?? null),
@@ -146,12 +152,43 @@ export async function findOriginalFactoryCallbackByDeliveryId(
   return normalizeFactoryCallback(rows[0]);
 }
 
+export async function findLatestNexoCallbackByJobAndStatus(
+  { jobId, nexoJobId, status } = {},
+  db = pool
+) {
+  if (!jobId || !nexoJobId || !status) {
+    return null;
+  }
+
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
+    `SELECT * FROM factory_callbacks
+    WHERE provider = 'nexo'
+      AND job_id = ?
+      AND factory_order_id = ?
+      AND status = ?
+      AND processing_status IN (?, ?)
+    ORDER BY id DESC
+    LIMIT 1`,
+    [
+      jobId,
+      nexoJobId,
+      status,
+      FACTORY_CALLBACK_PROCESSING_STATUSES.PROCESSED,
+      FACTORY_CALLBACK_PROCESSING_STATUSES.MANUAL_REVIEW,
+    ]
+  );
+
+  return normalizeFactoryCallback(rows[0]);
+}
+
 export async function updateFactoryCallbackProcessingStatus(
   id,
   {
     processingStatus,
     errorMessage = null,
     orderId = null,
+    jobId = null,
     duplicateOfId = null,
   } = {},
   db = pool
@@ -163,9 +200,10 @@ export async function updateFactoryCallbackProcessingStatus(
     SET processing_status = ?,
       error_message = ?,
       order_id = COALESCE(?, order_id),
+      job_id = COALESCE(?, job_id),
       duplicate_of_id = COALESCE(?, duplicate_of_id)
     WHERE id = ?`,
-    [processingStatus, errorMessage, orderId, duplicateOfId, id]
+    [processingStatus, errorMessage, orderId, jobId, duplicateOfId, id]
   );
 
   return findFactoryCallbackById(id, executor);
@@ -176,5 +214,6 @@ export default {
   findFactoryCallbackById,
   listFactoryCallbacks,
   findOriginalFactoryCallbackByDeliveryId,
+  findLatestNexoCallbackByJobAndStatus,
   updateFactoryCallbackProcessingStatus,
 };

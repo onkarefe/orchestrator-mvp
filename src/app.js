@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import adminRoutes from './routes/admin.routes.js';
 import factoryCallbackRoutes from './routes/factoryCallback.routes.js';
 import healthRoutes from './routes/health.routes.js';
+import nexoCallbackRoutes from './routes/nexoCallback.routes.js';
 import webhookRoutes from './routes/webhook.routes.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -20,6 +21,7 @@ app.use(express.static(path.join(rootDir, 'public')));
 
 app.use(webhookRoutes);
 app.use(factoryCallbackRoutes);
+app.use(nexoCallbackRoutes);
 app.use(express.json());
 app.use(healthRoutes);
 app.use(adminRoutes);

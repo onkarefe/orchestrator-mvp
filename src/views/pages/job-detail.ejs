@@ -59,6 +59,14 @@
           <dd><%= display(job.attempt_count) %> / <%= display(job.max_attempts) %></dd>
         </div>
         <div class="meta-item">
+          <dt>NEXO job ID</dt>
+          <dd class="mono"><%= display(job.nexo_job_id) %></dd>
+        </div>
+        <div class="meta-item">
+          <dt>NEXO status</dt>
+          <dd><span class="status-badge <%= statusClass(job.nexo_status) %>"><%= display(job.nexo_status) %></span></dd>
+        </div>
+        <div class="meta-item">
           <dt>Locked at</dt>
           <dd><%= display(job.locked_at) %></dd>
         </div>

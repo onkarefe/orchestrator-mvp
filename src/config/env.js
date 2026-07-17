@@ -118,6 +118,12 @@ const env = {
     true
   ),
   FACTORY_CALLBACK_API_KEY: process.env.FACTORY_CALLBACK_API_KEY ?? '',
+  NEXO_CALLBACK_ENABLED: booleanFromEnv('NEXO_CALLBACK_ENABLED', false),
+  NEXO_CALLBACK_AUTH_ENABLED: booleanFromEnv(
+    'NEXO_CALLBACK_AUTH_ENABLED',
+    true
+  ),
+  NEXO_CALLBACK_API_KEY: process.env.NEXO_CALLBACK_API_KEY ?? '',
   PROCESSING_MIN_FREE_DISK_MB: integerFromEnv(
     'PROCESSING_MIN_FREE_DISK_MB',
     1024,

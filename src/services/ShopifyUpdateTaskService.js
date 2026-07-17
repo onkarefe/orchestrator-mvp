@@ -11,6 +11,7 @@ import {
 } from '../models/ShopifyUpdateTaskModel.js';
 import { redact } from '../utils/redact.js';
 import { logInfo } from './LogService.js';
+import { buildNexoShopifyTaskIdempotencyKey } from './NexoCallbackAdapter.js';
 
 export const SHOPIFY_UPDATE_TASK_TYPES = Object.freeze({
   ORDER_PRODUCED: 'order_produced',
@@ -259,9 +260,214 @@ export async function ensureShopifyUpdateTaskDryRun({
   };
 }
 
+export function buildNexoShopifyUpdateTaskDraft({
+  order,
+  job,
+  factoryCallback,
+  nexoCallback,
+  shopifyWriteEnabled = env.SHOPIFY_WRITE_ENABLED,
+} = {}) {
+  const taskType =
+    nexoCallback?.status === 'printed'
+      ? SHOPIFY_UPDATE_TASK_TYPES.ORDER_PRODUCED
+      : nexoCallback?.status === 'shipped'
+        ? SHOPIFY_UPDATE_TASK_TYPES.ORDER_SHIPPED
+        : null;
+
+  if (!taskType || !order || !job || !factoryCallback?.id) {
+    return null;
+  }
+
+  const idempotencyKey = buildNexoShopifyTaskIdempotencyKey({
+    jobId: job.id,
+    reference: nexoCallback.reference,
+    taskType,
+    trackingNumbers: nexoCallback.trackingNumbers,
+  });
+  const payload = {
+    source: 'nexo_callback',
+    taskType,
+    idempotencyKey,
+    factoryCallbackId: String(factoryCallback.id),
+    factoryCallbackStatus: factoryCallback.processing_status ?? null,
+    nexoStatus: nexoCallback.status,
+    reference: nexoCallback.reference,
+    factoryReference: job.factory_reference,
+    nexoJobId: nexoCallback.nexoJobId,
+    timestamp: nexoCallback.timestamp,
+    jobId: job.id,
+    orderId: order.id,
+    shopifyOrderId: order.shopify_order_id ?? null,
+    orderStatus: order.status,
+    dryRun: true,
+    shopifyWriteEnabled: Boolean(shopifyWriteEnabled),
+    actualShopifyWriteImplemented: false,
+    writeSuppressed: true,
+    writeSuppressedReason: shopifyWriteEnabled
+      ? 'shopify_write_not_implemented'
+      : 'shopify_write_disabled',
+  };
+
+  if (taskType === SHOPIFY_UPDATE_TASK_TYPES.ORDER_SHIPPED) {
+    payload.parcel_service = nexoCallback.parcelService ?? null;
+    payload.trackingNumbers = nexoCallback.trackingNumbers.map(
+      ({ number, url }) => ({ number, url })
+    );
+  }
+
+  return {
+    orderId: order.id,
+    shopifyOrderId: order.shopify_order_id ?? null,
+    taskType,
+    idempotencyKey,
+    sourceType: 'nexo_callback',
+    sourceId: String(factoryCallback.id),
+    status: SHOPIFY_UPDATE_TASK_STATUSES.PENDING,
+    dryRun: true,
+    payloadJson: redact(payload),
+  };
+}
+
+function canonicalTrackingNumbers(value) {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const normalized = [];
+
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || item.number === undefined) {
+      return null;
+    }
+
+    normalized.push({
+      number: String(item.number),
+      url: item.url ?? null,
+    });
+  }
+
+  return normalized.sort((left, right) => {
+      if (left.number !== right.number) {
+        return left.number < right.number ? -1 : 1;
+      }
+
+      const leftUrl = String(left.url ?? '');
+      const rightUrl = String(right.url ?? '');
+      return leftUrl === rightUrl ? 0 : leftUrl < rightUrl ? -1 : 1;
+    });
+}
+
+function assertCompatibleNexoTask(existingTask, draft) {
+  const payload = existingTask?.payload_json ?? {};
+  const expectedPayload = draft.payloadJson ?? {};
+  const compatible = Boolean(
+    existingTask &&
+      existingTask.dry_run === true &&
+      existingTask.task_type === draft.taskType &&
+      existingTask.source_type === draft.sourceType &&
+      String(existingTask.order_id) === String(draft.orderId) &&
+      String(existingTask.shopify_order_id ?? '') ===
+        String(draft.shopifyOrderId ?? '') &&
+      payload.source === 'nexo_callback' &&
+      payload.dryRun === true &&
+      payload.writeSuppressed === true &&
+      String(payload.jobId) === String(expectedPayload.jobId) &&
+      payload.reference === expectedPayload.reference &&
+      payload.factoryReference === expectedPayload.factoryReference &&
+      String(payload.nexoJobId) === String(expectedPayload.nexoJobId) &&
+      (draft.taskType !== SHOPIFY_UPDATE_TASK_TYPES.ORDER_SHIPPED ||
+        (payload.parcel_service === expectedPayload.parcel_service &&
+          JSON.stringify(canonicalTrackingNumbers(payload.trackingNumbers)) ===
+            JSON.stringify(
+              canonicalTrackingNumbers(expectedPayload.trackingNumbers)
+            )))
+  );
+
+  if (!compatible) {
+    const error = new Error(
+      'Existing Shopify update task conflicts with NEXO idempotency identity'
+    );
+    error.code = 'NEXO_SHOPIFY_TASK_IDEMPOTENCY_CONFLICT';
+    throw error;
+  }
+
+  return existingTask;
+}
+
+export async function ensureNexoShopifyUpdateTaskDryRun({
+  order,
+  job,
+  factoryCallback,
+  nexoCallback,
+  db = undefined,
+} = {}) {
+  const draft = buildNexoShopifyUpdateTaskDraft({
+    order,
+    job,
+    factoryCallback,
+    nexoCallback,
+  });
+
+  if (!draft) {
+    return {
+      task: null,
+      created: false,
+      reason: 'shopify_update_task_not_applicable',
+    };
+  }
+
+  const existingTask = await findShopifyUpdateTaskByIdempotencyKey(
+    draft.idempotencyKey,
+    db
+  );
+
+  if (existingTask) {
+    assertCompatibleNexoTask(existingTask, draft);
+
+    return {
+      task: existingTask,
+      created: false,
+      reason: 'shopify_update_task_already_exists',
+    };
+  }
+
+  try {
+    const task = await createShopifyUpdateTask(draft, db);
+
+    return {
+      task,
+      created: true,
+      reason: 'shopify_update_task_created',
+    };
+  } catch (error) {
+    if (!isDuplicateKeyError(error)) {
+      throw error;
+    }
+
+    const task = await findShopifyUpdateTaskByIdempotencyKey(
+      draft.idempotencyKey,
+      db
+    );
+
+    if (!task) {
+      throw error;
+    }
+
+    assertCompatibleNexoTask(task, draft);
+
+    return {
+      task,
+      created: false,
+      reason: 'shopify_update_task_already_exists',
+    };
+  }
+}
+
 export default {
   SHOPIFY_UPDATE_TASK_TYPES,
+  buildNexoShopifyUpdateTaskDraft,
   buildShopifyUpdateTaskDraft,
+  ensureNexoShopifyUpdateTaskDryRun,
   ensureShopifyUpdateTaskDryRun,
   getShopifyUpdateTaskTypeForFactoryStatus,
 };

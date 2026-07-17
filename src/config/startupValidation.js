@@ -26,6 +26,16 @@ export function validateServerStartupEnv(config = env) {
     );
   }
 
+  if (
+    config.NEXO_CALLBACK_ENABLED &&
+    config.NEXO_CALLBACK_AUTH_ENABLED &&
+    !hasConfiguredSecret(config.NEXO_CALLBACK_API_KEY)
+  ) {
+    errors.push(
+      'NEXO_CALLBACK_API_KEY is required when the NEXO callback endpoint and authentication are enabled'
+    );
+  }
+
   if (errors.length) {
     const error = new Error(`Unsafe startup configuration: ${errors.join('; ')}`);
     error.code = 'UNSAFE_STARTUP_CONFIGURATION';
@@ -45,6 +55,8 @@ export function getSafeStartupConfigSummary(config = env) {
     shopifyWebhookStoreInvalid: Boolean(config.SHOPIFY_WEBHOOK_STORE_INVALID),
     factoryCallbackEnabled: Boolean(config.FACTORY_CALLBACK_ENABLED),
     factoryCallbackAuthEnabled: Boolean(config.FACTORY_CALLBACK_AUTH_ENABLED),
+    nexoCallbackEnabled: Boolean(config.NEXO_CALLBACK_ENABLED),
+    nexoCallbackAuthEnabled: Boolean(config.NEXO_CALLBACK_AUTH_ENABLED),
     ftpUploadEnabled: Boolean(config.FTP_UPLOAD_ENABLED),
     shopifyWriteEnabled: Boolean(config.SHOPIFY_WRITE_ENABLED),
     configuratorRequiredSkuPrefixCount:
