@@ -39,7 +39,6 @@ export const SHOPIFY_ORDER_FULFILLMENT_QUERY = `
               remainingQuantity
               lineItem {
                 id
-                legacyResourceId
               }
             }
           }

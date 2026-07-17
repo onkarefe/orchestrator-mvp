@@ -120,11 +120,12 @@ for (const value of Object.values(redactedSecrets)) {
   assert.equal(value, REDACTED_VALUE);
 }
 
-const shopifyOrderId = '7248237232408';
-const shopifyLineItemId = '9988776655';
-const fulfillmentOrderId = 'gid://shopify/FulfillmentOrder/111';
+const shopifyOrderId = '7259989737752';
+const shopifyLineItemId = '17199936274712';
+const fulfillmentOrderId =
+  'gid://shopify/FulfillmentOrder/8197734662424';
 const targetFulfillmentLineItemId =
-  'gid://shopify/FulfillmentOrderLineItem/222';
+  'gid://shopify/FulfillmentOrderLineItem/17398957179160';
 const unrelatedFulfillmentLineItemId =
   'gid://shopify/FulfillmentOrderLineItem/333';
 const taskPayload = {
@@ -144,7 +145,6 @@ function fulfillmentOrderResponse({ includeTarget = true, remainingQuantity = 2 
       remainingQuantity: 1,
       lineItem: {
         id: 'gid://shopify/LineItem/123456',
-        legacyResourceId: '123456',
       },
     },
   ];
@@ -155,7 +155,6 @@ function fulfillmentOrderResponse({ includeTarget = true, remainingQuantity = 2 
       remainingQuantity,
       lineItem: {
         id: `gid://shopify/LineItem/${shopifyLineItemId}`,
-        legacyResourceId: shopifyLineItemId,
       },
     });
   }
@@ -177,8 +176,20 @@ function fulfillmentOrderResponse({ includeTarget = true, remainingQuantity = 2 
   };
 }
 
+const shopify202601Order = fulfillmentOrderResponse();
+const shopify202601TargetLineItem =
+  shopify202601Order.fulfillmentOrders.nodes[0].lineItems.nodes[1].lineItem;
+
+assert.equal(
+  Object.prototype.hasOwnProperty.call(
+    shopify202601TargetLineItem,
+    'legacyResourceId'
+  ),
+  false
+);
+
 const matchedPlan = buildShopifyFulfillmentPlan({
-  order: fulfillmentOrderResponse(),
+  order: shopify202601Order,
   shopifyOrderId,
   shopifyLineItemId,
   taskPayload,
