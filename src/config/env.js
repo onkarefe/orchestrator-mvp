@@ -1,5 +1,7 @@
 import 'dotenv/config';
 
+import { parseShopifyWriteOrderAllowlist } from './shopifyAdmin.js';
+
 function booleanFromEnv(name, defaultValue) {
   const value = process.env[name];
 
@@ -48,6 +50,24 @@ function positiveNumberFromEnv(name, defaultValue) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
 }
 
+function positiveIntegerFromEnv(name, defaultValue) {
+  const value = process.env[name];
+
+  if (value === undefined || value === null || value === '') {
+    return defaultValue;
+  }
+
+  const normalized = String(value).trim();
+
+  if (!/^[1-9][0-9]*$/.test(normalized)) {
+    return defaultValue;
+  }
+
+  const parsed = Number(normalized);
+
+  return Number.isSafeInteger(parsed) ? parsed : defaultValue;
+}
+
 function csvFromEnv(name, defaultValue = []) {
   const value = process.env[name];
 
@@ -62,6 +82,10 @@ function csvFromEnv(name, defaultValue = []) {
 
   return values.length ? values : [...defaultValue];
 }
+
+const shopifyWriteOrderAllowlist = parseShopifyWriteOrderAllowlist(
+  process.env.SHOPIFY_WRITE_ORDER_ALLOWLIST
+);
 
 const env = {
   PORT: Number(process.env.PORT || 3000),
@@ -111,7 +135,31 @@ const env = {
     100
   ),
   FTP_UPLOAD_ENABLED: booleanFromEnv('FTP_UPLOAD_ENABLED', false),
+  SHOPIFY_SHOP_DOMAIN: process.env.SHOPIFY_SHOP_DOMAIN ?? '',
+  SHOPIFY_ADMIN_API_VERSION:
+    process.env.SHOPIFY_ADMIN_API_VERSION || '2026-01',
+  SHOPIFY_CLIENT_ID: process.env.SHOPIFY_CLIENT_ID ?? '',
+  SHOPIFY_CLIENT_SECRET: process.env.SHOPIFY_CLIENT_SECRET ?? '',
   SHOPIFY_WRITE_ENABLED: booleanFromEnv('SHOPIFY_WRITE_ENABLED', false),
+  SHOPIFY_WRITE_ORDER_ALLOWLIST: shopifyWriteOrderAllowlist.orderIds,
+  SHOPIFY_WRITE_ORDER_ALLOWLIST_INVALID_ENTRIES:
+    shopifyWriteOrderAllowlist.invalidEntries,
+  SHOPIFY_FULFILLMENT_NOTIFY_CUSTOMER: booleanFromEnv(
+    'SHOPIFY_FULFILLMENT_NOTIFY_CUSTOMER',
+    false
+  ),
+  SHOPIFY_UPDATE_EXECUTOR_ENABLED: booleanFromEnv(
+    'SHOPIFY_UPDATE_EXECUTOR_ENABLED',
+    false
+  ),
+  SHOPIFY_UPDATE_TASK_BATCH_SIZE: positiveIntegerFromEnv(
+    'SHOPIFY_UPDATE_TASK_BATCH_SIZE',
+    5
+  ),
+  SHOPIFY_UPDATE_TASK_MAX_ATTEMPTS: positiveIntegerFromEnv(
+    'SHOPIFY_UPDATE_TASK_MAX_ATTEMPTS',
+    3
+  ),
   FACTORY_CALLBACK_ENABLED: booleanFromEnv('FACTORY_CALLBACK_ENABLED', true),
   FACTORY_CALLBACK_AUTH_ENABLED: booleanFromEnv(
     'FACTORY_CALLBACK_AUTH_ENABLED',

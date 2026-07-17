@@ -62,6 +62,7 @@ export const SHOPIFY_UPDATE_TASK_STATUSES = Object.freeze({
   PENDING: 'pending',
   PROCESSING: 'processing',
   COMPLETED: 'completed',
+  SKIPPED: 'skipped',
   FAILED: 'failed',
   MANUAL_REVIEW: 'manual_review',
 });

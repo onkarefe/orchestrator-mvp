@@ -3,7 +3,12 @@
     value === null || value === undefined || value === '' ? '-' : value;
   const statusClass = (value) =>
     `status-${String(value || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-  const dryRunLabel = (value) => value ? 'Dry-run' : 'Live';
+  const dryRunLabel = (value) => value ? 'Dry-run' : 'Live candidate';
+  const writeBlockReason =
+    shopifyUpdateTask.result_json?.externalWriteBlockedReason ||
+    shopifyUpdateTask.result_json?.writeSuppressedReason ||
+    shopifyUpdateTask.payload_json?.writeSuppressedReason ||
+    '-';
 %>
 <section class="page">
   <header class="page-header page-header-with-actions">
@@ -21,7 +26,7 @@
   <section class="card">
     <div class="card-header">
       <div>
-        <p class="section-label">Dry-run task</p>
+        <p class="section-label">Executor task</p>
         <h2>Update summary</h2>
       </div>
     </div>
@@ -63,6 +68,38 @@
         <dd><%= display(shopifyUpdateTask.last_error) %></dd>
       </div>
       <div class="meta-item">
+        <dt>External write block</dt>
+        <dd class="mono"><%= display(writeBlockReason) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>External ID</dt>
+        <dd class="mono"><%= display(shopifyUpdateTask.external_id) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Locked by</dt>
+        <dd class="mono"><%= display(shopifyUpdateTask.locked_by) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Locked at</dt>
+        <dd><%= display(shopifyUpdateTask.locked_at) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Processed</dt>
+        <dd><%= display(shopifyUpdateTask.processed_at) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Completed</dt>
+        <dd><%= display(shopifyUpdateTask.completed_at) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Skipped</dt>
+        <dd><%= display(shopifyUpdateTask.skipped_at) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Failed / manual review</dt>
+        <dd><%= display(shopifyUpdateTask.failed_at) %></dd>
+      </div>
+      <div class="meta-item">
         <dt>Created</dt>
         <dd><%= display(shopifyUpdateTask.created_at) %></dd>
       </div>
@@ -73,7 +110,7 @@
     <summary>
       <span>
         <span class="section-label">Technical data</span>
-        <strong>Redacted dry-run payload</strong>
+        <strong>Redacted task payload</strong>
       </span>
       <span class="disclosure-hint">Show payload</span>
     </summary>

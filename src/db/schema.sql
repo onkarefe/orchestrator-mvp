@@ -222,6 +222,10 @@ CREATE TABLE IF NOT EXISTS shopify_update_tasks (
   locked_by VARCHAR(191) NULL,
   last_error TEXT NULL,
   processed_at TIMESTAMP NULL DEFAULT NULL,
+  completed_at TIMESTAMP NULL DEFAULT NULL,
+  failed_at TIMESTAMP NULL DEFAULT NULL,
+  skipped_at TIMESTAMP NULL DEFAULT NULL,
+  external_id VARCHAR(191) NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -230,6 +234,7 @@ CREATE TABLE IF NOT EXISTS shopify_update_tasks (
   KEY idx_shopify_update_tasks_status (status),
   KEY idx_shopify_update_tasks_status_locked_at (status, locked_at),
   KEY idx_shopify_update_tasks_task_type (task_type),
+  KEY idx_shopify_update_tasks_external_id (external_id),
   UNIQUE KEY uq_shopify_update_tasks_idempotency_key (idempotency_key),
   KEY idx_shopify_update_tasks_source (source_type, source_id),
   CONSTRAINT fk_shopify_update_tasks_order_id FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE SET NULL

@@ -168,6 +168,7 @@ export function buildShopifyUpdateTaskDraft({
     sourceId: String(factoryCallback.id),
     status: SHOPIFY_UPDATE_TASK_STATUSES.PENDING,
     dryRun: true,
+    maxAttempts: env.SHOPIFY_UPDATE_TASK_MAX_ATTEMPTS,
     payloadJson: redact(payload),
   };
 }
@@ -324,6 +325,7 @@ export function buildNexoShopifyUpdateTaskDraft({
     sourceId: String(factoryCallback.id),
     status: SHOPIFY_UPDATE_TASK_STATUSES.PENDING,
     dryRun: true,
+    maxAttempts: env.SHOPIFY_UPDATE_TASK_MAX_ATTEMPTS,
     payloadJson: redact(payload),
   };
 }

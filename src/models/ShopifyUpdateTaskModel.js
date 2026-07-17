@@ -56,6 +56,27 @@ function normalizePagination(limit, offset) {
   };
 }
 
+function normalizeExecutorOptions({ workerId, maxAttempts, excludeIds } = {}) {
+  const normalizedWorkerId = String(workerId ?? '').trim().slice(0, 191);
+  const parsedMaxAttempts = Number(maxAttempts);
+  const normalizedExcludeIds = [
+    ...new Set(
+      (Array.isArray(excludeIds) ? excludeIds : [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isSafeInteger(id) && id > 0)
+    ),
+  ].slice(0, 100);
+
+  return {
+    workerId: normalizedWorkerId,
+    maxAttempts:
+      Number.isSafeInteger(parsedMaxAttempts) && parsedMaxAttempts > 0
+        ? parsedMaxAttempts
+        : 3,
+    excludeIds: normalizedExcludeIds,
+  };
+}
+
 export async function createShopifyUpdateTask(data, db = pool) {
   const executor = getExecutor(db);
   const [result] = await executor.execute(
@@ -165,10 +186,274 @@ export async function findShopifyUpdateTaskByFactoryCallbackId(
   return normalizeShopifyUpdateTask(rows[0]);
 }
 
+export async function claimNextPendingShopifyUpdateTask(options = {}) {
+  const { workerId, maxAttempts, excludeIds } =
+    normalizeExecutorOptions(options);
+
+  if (!workerId) {
+    throw new Error('Shopify update executor worker ID is required');
+  }
+
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const exclusionSql = excludeIds.length
+      ? ` AND id NOT IN (${excludeIds.map(() => '?').join(', ')})`
+      : '';
+
+    const [rows] = await connection.execute(
+      `SELECT * FROM shopify_update_tasks
+      WHERE status = ?
+        AND COALESCE(attempt_count, 0) <
+          LEAST(COALESCE(max_attempts, ?), ?)${exclusionSql}
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED`,
+      [
+        SHOPIFY_UPDATE_TASK_STATUSES.PENDING,
+        maxAttempts,
+        maxAttempts,
+        ...excludeIds,
+      ]
+    );
+    const candidate = rows[0];
+
+    if (!candidate) {
+      await connection.commit();
+      return null;
+    }
+
+    const [result] = await connection.execute(
+      `UPDATE shopify_update_tasks
+      SET status = ?,
+        attempt_count = COALESCE(attempt_count, 0) + 1,
+        max_attempts = LEAST(COALESCE(max_attempts, ?), ?),
+        locked_at = CURRENT_TIMESTAMP,
+        locked_by = ?,
+        last_error = NULL
+      WHERE id = ?
+        AND status = ?
+        AND COALESCE(attempt_count, 0) <
+          LEAST(COALESCE(max_attempts, ?), ?)`,
+      [
+        SHOPIFY_UPDATE_TASK_STATUSES.PROCESSING,
+        maxAttempts,
+        maxAttempts,
+        workerId,
+        candidate.id,
+        SHOPIFY_UPDATE_TASK_STATUSES.PENDING,
+        maxAttempts,
+        maxAttempts,
+      ]
+    );
+
+    if (result.affectedRows !== 1) {
+      await connection.rollback();
+      return null;
+    }
+
+    const claimedTask = await findShopifyUpdateTaskById(
+      candidate.id,
+      connection
+    );
+
+    await connection.commit();
+    return claimedTask;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+export async function findOwnedShopifyUpdateTaskClaim(
+  id,
+  workerId,
+  db = pool
+) {
+  const normalizedWorkerId = String(workerId ?? '').trim();
+
+  if (!normalizedWorkerId) {
+    return null;
+  }
+
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
+    `SELECT * FROM shopify_update_tasks
+    WHERE id = ?
+      AND status = ?
+      AND locked_by = ?
+      AND locked_at IS NOT NULL
+    LIMIT 1`,
+    [id, SHOPIFY_UPDATE_TASK_STATUSES.PROCESSING, normalizedWorkerId]
+  );
+
+  return normalizeShopifyUpdateTask(rows[0]);
+}
+
+export async function finalizeShopifyUpdateTask(
+  id,
+  { status, resultJson, lastError = null, externalId = null, workerId },
+  db = pool
+) {
+  const timestampColumnByStatus = {
+    [SHOPIFY_UPDATE_TASK_STATUSES.COMPLETED]: 'completed_at',
+    [SHOPIFY_UPDATE_TASK_STATUSES.SKIPPED]: 'skipped_at',
+    [SHOPIFY_UPDATE_TASK_STATUSES.FAILED]: 'failed_at',
+    [SHOPIFY_UPDATE_TASK_STATUSES.MANUAL_REVIEW]: 'failed_at',
+  };
+  const timestampColumn = timestampColumnByStatus[status];
+  const normalizedWorkerId = String(workerId ?? '').trim();
+
+  if (!timestampColumn || !normalizedWorkerId) {
+    throw new Error('Invalid Shopify update task finalization request');
+  }
+
+  const executor = getExecutor(db);
+  const [result] = await executor.execute(
+    `UPDATE shopify_update_tasks
+    SET status = ?,
+      result_json = ?,
+      last_error = ?,
+      external_id = ?,
+      locked_at = NULL,
+      locked_by = NULL,
+      processed_at = CURRENT_TIMESTAMP,
+      ${timestampColumn} = CURRENT_TIMESTAMP
+    WHERE id = ?
+      AND status = ?
+      AND locked_by = ?`,
+    [
+      status,
+      jsonForWrite(resultJson),
+      lastError,
+      externalId,
+      id,
+      SHOPIFY_UPDATE_TASK_STATUSES.PROCESSING,
+      normalizedWorkerId,
+    ]
+  );
+
+  return {
+    updated: result.affectedRows === 1,
+    task:
+      result.affectedRows === 1
+        ? await findShopifyUpdateTaskById(id, executor)
+        : null,
+  };
+}
+
+export async function requeueShopifyUpdateTask(
+  id,
+  { resultJson, lastError, workerId },
+  db = pool
+) {
+  const normalizedWorkerId = String(workerId ?? '').trim();
+
+  if (!normalizedWorkerId) {
+    throw new Error('Shopify update executor worker ID is required');
+  }
+
+  const executor = getExecutor(db);
+  const [result] = await executor.execute(
+    `UPDATE shopify_update_tasks
+    SET status = ?,
+      result_json = ?,
+      last_error = ?,
+      locked_at = NULL,
+      locked_by = NULL
+    WHERE id = ?
+      AND status = ?
+      AND locked_by = ?`,
+    [
+      SHOPIFY_UPDATE_TASK_STATUSES.PENDING,
+      jsonForWrite(resultJson),
+      lastError,
+      id,
+      SHOPIFY_UPDATE_TASK_STATUSES.PROCESSING,
+      normalizedWorkerId,
+    ]
+  );
+
+  return result.affectedRows === 1;
+}
+
+export async function releaseStaleShopifyUpdateTaskClaims({
+  staleLockMinutes,
+  maxAttempts,
+} = {}) {
+  const parsedStaleMinutes = Number(staleLockMinutes);
+  const parsedMaxAttempts = Number(maxAttempts);
+  const safeStaleMinutes =
+    Number.isSafeInteger(parsedStaleMinutes) && parsedStaleMinutes > 0
+      ? parsedStaleMinutes
+      : 30;
+  const safeMaxAttempts =
+    Number.isSafeInteger(parsedMaxAttempts) && parsedMaxAttempts > 0
+      ? parsedMaxAttempts
+      : 3;
+
+  const [requeued] = await pool.execute(
+    `UPDATE shopify_update_tasks
+    SET status = ?,
+      last_error = ?,
+      locked_at = NULL,
+      locked_by = NULL
+    WHERE status = ?
+      AND locked_at IS NOT NULL
+      AND locked_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ? MINUTE)
+      AND COALESCE(attempt_count, 0) <
+        LEAST(COALESCE(max_attempts, ?), ?)`,
+    [
+      SHOPIFY_UPDATE_TASK_STATUSES.PENDING,
+      'shopify_update_executor_stale_claim_released',
+      SHOPIFY_UPDATE_TASK_STATUSES.PROCESSING,
+      safeStaleMinutes,
+      safeMaxAttempts,
+      safeMaxAttempts,
+    ]
+  );
+  const [failed] = await pool.execute(
+    `UPDATE shopify_update_tasks
+    SET status = ?,
+      last_error = ?,
+      locked_at = NULL,
+      locked_by = NULL,
+      processed_at = CURRENT_TIMESTAMP,
+      failed_at = CURRENT_TIMESTAMP
+    WHERE status = ?
+      AND locked_at IS NOT NULL
+      AND locked_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ? MINUTE)
+      AND COALESCE(attempt_count, 0) >=
+        LEAST(COALESCE(max_attempts, ?), ?)`,
+    [
+      SHOPIFY_UPDATE_TASK_STATUSES.FAILED,
+      'shopify_update_executor_stale_claim_max_attempts_exceeded',
+      SHOPIFY_UPDATE_TASK_STATUSES.PROCESSING,
+      safeStaleMinutes,
+      safeMaxAttempts,
+      safeMaxAttempts,
+    ]
+  );
+
+  return {
+    requeued: requeued.affectedRows,
+    failed: failed.affectedRows,
+  };
+}
+
 export default {
   createShopifyUpdateTask,
   findShopifyUpdateTaskById,
   findShopifyUpdateTaskByIdempotencyKey,
   listShopifyUpdateTasks,
   findShopifyUpdateTaskByFactoryCallbackId,
+  claimNextPendingShopifyUpdateTask,
+  findOwnedShopifyUpdateTaskClaim,
+  finalizeShopifyUpdateTask,
+  requeueShopifyUpdateTask,
+  releaseStaleShopifyUpdateTaskClaims,
 };
