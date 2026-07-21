@@ -9,6 +9,7 @@
     "test:nexo-adapter": "node scripts/nexo-adapter-smoke-test.mjs",
     "test:shopify-admin-config": "node scripts/shopify-admin-config-smoke-test.mjs",
     "admin:hash-password": "node scripts/admin-hash-password.js",
+    "nexo:compat-package": "node scripts/create-nexo-compat-test-package.mjs",
     "shopify:update-once": "node scripts/shopify-update-executor-once.mjs",
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
