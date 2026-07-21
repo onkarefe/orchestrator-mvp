@@ -135,36 +135,76 @@ function getShippingTo(rawPayload) {
   return shippingTo;
 }
 
-function getFirstPanel(panelFiles) {
-  const firstPanel = Array.isArray(panelFiles) ? panelFiles[0] : null;
-  const fileName = firstPanel?.fileName;
-  const widthMm = Number(firstPanel?.widthMm);
-  const heightMm = Number(firstPanel?.heightMm);
-
-  if (!fileName) {
-    throw new Error('First generated panel PDF is required for NEXO XML');
+function getGeneratedPanels(panelFiles) {
+  if (!Array.isArray(panelFiles) || panelFiles.length === 0) {
+    throw new Error('Generated panel PDFs are required for NEXO XML');
   }
 
-  if (!Number.isFinite(widthMm) || widthMm <= 0) {
-    throw new Error('First generated panel width must be a positive number');
+  const panels = panelFiles.map((panelFile, index) => {
+    const panelNumber = index + 1;
+    const fileName = normalizeText(panelFile?.fileName);
+    const widthMm = Number(panelFile?.widthMm);
+    const heightMm = Number(panelFile?.heightMm);
+
+    if (!fileName || !/\.pdf$/i.test(fileName)) {
+      throw new Error(
+        `Generated panel ${panelNumber} must have a PDF filename for NEXO XML`
+      );
+    }
+
+    if (!Number.isFinite(widthMm) || widthMm <= 0) {
+      throw new Error(
+        `Generated panel ${panelNumber} width must be a positive number`
+      );
+    }
+
+    if (!Number.isFinite(heightMm) || heightMm <= 0) {
+      throw new Error(
+        `Generated panel ${panelNumber} height must be a positive number`
+      );
+    }
+
+    return { fileName, widthMm, heightMm };
+  });
+  const uniqueFileNames = new Set(panels.map((panel) => panel.fileName));
+
+  if (uniqueFileNames.size !== panels.length) {
+    throw new Error('Generated panel PDF filenames must be unique for NEXO XML');
   }
 
-  if (!Number.isFinite(heightMm) || heightMm <= 0) {
-    throw new Error('First generated panel height must be a positive number');
+  const firstPanel = panels[0];
+  const mismatchedPanel = panels.find(
+    (panel) =>
+      Math.abs(panel.widthMm - firstPanel.widthMm) > 0.001 ||
+      Math.abs(panel.heightMm - firstPanel.heightMm) > 0.001
+  );
+
+  if (mismatchedPanel) {
+    throw new Error(
+      `Generated panel dimensions must match for one-position NEXO XML: ${mismatchedPanel.fileName}`
+    );
   }
 
-  return { fileName, widthMm, heightMm };
+  return panels;
 }
 
-function buildPositionXml(panel) {
+function buildPositionXml(panels) {
+  const firstPanel = panels[0];
+  const fileItems = panels
+    .map(
+      (panel) =>
+        `        <file type="ftp">${xmlEscape(panel.fileName)}</file>`
+    )
+    .join('\n');
+
   return `    <position>
       <sku>${xmlEscape(env.NEXO_PRODUCT_SKU)}</sku>
-      <width unit="mm">${xmlEscape(formatMm(panel.widthMm))}</width>
-      <height unit="mm">${xmlEscape(formatMm(panel.heightMm))}</height>
-      <variants>1</variants>
+      <width unit="mm">${xmlEscape(formatMm(firstPanel.widthMm))}</width>
+      <height unit="mm">${xmlEscape(formatMm(firstPanel.heightMm))}</height>
+      <variants>${xmlEscape(panels.length)}</variants>
       <copies_per_variant>1</copies_per_variant>
       <files>
-        <file type="ftp">${xmlEscape(panel.fileName)}</file>
+${fileItems}
       </files>
     </position>`;
 }
@@ -182,8 +222,8 @@ export function buildOrderXml({ order, job, shopifyOrderId, panelFiles }) {
   });
   const shippingFrom = getShippingFrom();
   const shippingTo = getShippingTo(rawPayload);
-  const firstPanel = getFirstPanel(panelFiles);
-  const positionXml = buildPositionXml(firstPanel);
+  const panels = getGeneratedPanels(panelFiles);
+  const positionXml = buildPositionXml(panels);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <root>
