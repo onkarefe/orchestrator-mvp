@@ -1,3 +1,25 @@
+import env from '../config/env.js';
+import { buildFactoryReference } from '../utils/factoryReference.js';
+
+const NEXO_DEMO_SHIPPING_FROM = Object.freeze({
+  company: 'Werbeagentur XY GmbH',
+  contactPerson: '',
+  street: 'Musterstr. 4',
+  postcode: '12345',
+  city: 'Musterstadt',
+  country: 'DE',
+});
+
+const NEXO_DEMO_SHIPPING_TO = Object.freeze({
+  company: 'Musterkunde AG',
+  contactPerson: 'Martina Musterfrau',
+  street: 'Testweg 45',
+  postcode: '54321',
+  city: 'Testhausen',
+  country: 'DE',
+  phone: '01234-567890',
+});
+
 export function xmlEscape(value) {
   if (value === null || value === undefined) {
     return '';
@@ -9,18 +31,6 @@ export function xmlEscape(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&apos;');
-}
-
-function parseJsonIfNeeded(value) {
-  if (value === null || value === undefined || typeof value !== 'string') {
-    return value;
-  }
-
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
 }
 
 function formatMm(value) {
@@ -37,193 +47,74 @@ function formatMm(value) {
   return String(Number(numberValue.toFixed(3)));
 }
 
-function getCustomerFullName(rawPayload) {
-  const firstName = rawPayload?.customer?.first_name ?? '';
-  const lastName = rawPayload?.customer?.last_name ?? '';
+function getFirstPanel(panelFiles) {
+  const firstPanel = Array.isArray(panelFiles) ? panelFiles[0] : null;
+  const fileName = firstPanel?.fileName;
+  const widthMm = Number(firstPanel?.widthMm);
+  const heightMm = Number(firstPanel?.heightMm);
 
-  return `${firstName} ${lastName}`.trim() || rawPayload?.customer?.name || '';
-}
-
-function getShippingType(rawPayload) {
-  const shippingLine = Array.isArray(rawPayload?.shipping_lines)
-    ? rawPayload.shipping_lines[0]
-    : null;
-  const shippingMethod = shippingLine?.code || shippingLine?.title;
-
-  return ['Standard', '24h Express', '48h Express'].includes(shippingMethod)
-    ? shippingMethod
-    : 'Standard';
-}
-
-function getShippingFrom() {
-  return {
-    company: process.env.FACTORY_SHIPPING_FROM_COMPANY || 'TO_BE_AGREED',
-    contactPerson:
-      process.env.FACTORY_SHIPPING_FROM_CONTACT_PERSON || 'TO_BE_AGREED',
-    street: process.env.FACTORY_SHIPPING_FROM_STREET || 'TO_BE_AGREED',
-    postcode: process.env.FACTORY_SHIPPING_FROM_POSTCODE || '00000',
-    city: process.env.FACTORY_SHIPPING_FROM_CITY || 'TO_BE_AGREED',
-    country: process.env.FACTORY_SHIPPING_FROM_COUNTRY || 'DE',
-  };
-}
-
-function getShippingTo(rawPayload) {
-  const address =
-    rawPayload?.shipping_address ??
-    rawPayload?.billing_address ??
-    rawPayload?.customer?.default_address ??
-    {};
-  const customerFullName = getCustomerFullName(rawPayload);
-  const company =
-    address.company || address.name || customerFullName || 'Private Customer';
-
-  return {
-    company,
-    contactPerson: address.name || customerFullName || company,
-    street: [address.address1, address.address2].filter(Boolean).join(' ').trim(),
-    postcode: address.zip || '00000',
-    city: address.city || 'Unknown',
-    country: address.country_code || 'DE',
-    phone:
-      address.phone ||
-      rawPayload?.customer?.phone ||
-      rawPayload?.phone ||
-      '0000',
-  };
-}
-
-function getSku(rawPayload, job) {
-  const lineItems = Array.isArray(rawPayload?.line_items)
-    ? rawPayload.line_items
-    : [];
-  const lineItemId = job?.shopify_line_item_id;
-  const lineItem =
-    lineItemId === null || lineItemId === undefined
-      ? null
-      : lineItems.find((item) => String(item?.id) === String(lineItemId));
-
-  return lineItem?.sku || 'MISSING-SKU';
-}
-
-function normalizePanelFiles(panelFiles, job) {
-  if (!Array.isArray(panelFiles)) {
-    return [];
+  if (!fileName) {
+    throw new Error('First generated panel PDF is required for NEXO XML');
   }
 
-  return panelFiles
-    .map((panelFile) => {
-      if (!panelFile) {
-        return null;
-      }
-
-      if (typeof panelFile === 'string') {
-        return {
-          fileName: panelFile,
-          widthMm: Number(job?.width_mm),
-          heightMm: Number(job?.height_mm),
-        };
-      }
-
-      return {
-        fileName: panelFile.fileName,
-        widthMm: Number(panelFile.widthMm),
-        heightMm: Number(panelFile.heightMm),
-      };
-    })
-    .filter((panelFile) => panelFile?.fileName);
-}
-
-function groupPanelFilesByDimensions(panelFiles) {
-  const groups = [];
-
-  for (const panelFile of panelFiles) {
-    const widthMm = Number(panelFile.widthMm);
-    const heightMm = Number(panelFile.heightMm);
-
-    const lastGroup = groups[groups.length - 1];
-    const sameAsLast =
-      lastGroup &&
-      Math.abs(lastGroup.widthMm - widthMm) < 0.000001 &&
-      Math.abs(lastGroup.heightMm - heightMm) < 0.000001;
-
-    if (sameAsLast) {
-      lastGroup.files.push(panelFile.fileName);
-      continue;
-    }
-
-    groups.push({
-      widthMm,
-      heightMm,
-      files: [panelFile.fileName],
-    });
+  if (!Number.isFinite(widthMm) || widthMm <= 0) {
+    throw new Error('First generated panel width must be a positive number');
   }
 
-  return groups;
+  if (!Number.isFinite(heightMm) || heightMm <= 0) {
+    throw new Error('First generated panel height must be a positive number');
+  }
+
+  return { fileName, widthMm, heightMm };
 }
 
-function buildPositionsXml(rawPayload, job, panelFiles) {
-  const sku = getSku(rawPayload, job);
-  const normalizedPanelFiles = normalizePanelFiles(panelFiles, job);
-  const groupedPositions = groupPanelFilesByDimensions(normalizedPanelFiles);
-
-  return groupedPositions
-    .map((position) => {
-      const fileItems = position.files
-        .map(
-          (fileName) =>
-            `        <file type="ftp">${xmlEscape(fileName)}</file>`
-        )
-        .join('\n');
-
-      return `    <position>
-      <sku>${xmlEscape(sku)}</sku>
-      <width unit="mm">${xmlEscape(formatMm(position.widthMm))}</width>
-      <height unit="mm">${xmlEscape(formatMm(position.heightMm))}</height>
-      <variants>${xmlEscape(position.files.length)}</variants>
+function buildPositionXml(panel) {
+  return `    <position>
+      <sku>${xmlEscape(env.NEXO_PRODUCT_SKU)}</sku>
+      <width unit="mm">${xmlEscape(formatMm(panel.widthMm))}</width>
+      <height unit="mm">${xmlEscape(formatMm(panel.heightMm))}</height>
+      <variants>1</variants>
       <copies_per_variant>1</copies_per_variant>
       <files>
-${fileItems}
+        <file type="ftp">${xmlEscape(panel.fileName)}</file>
       </files>
     </position>`;
-    })
-    .join('\n');
 }
 
-export function buildOrderXml({ order, job, shopifyOrderId, panelFiles }) {
-  const rawPayload = parseJsonIfNeeded(order?.raw_payload_json) ?? {};
-  const shippingFrom = getShippingFrom();
-  const shippingTo = getShippingTo(rawPayload);
-  const reference =
-    rawPayload.name || order?.shopify_order_number || shopifyOrderId;
-
-  const positionsXml = buildPositionsXml(rawPayload, job, panelFiles);
+export function buildOrderXml({ job, shopifyOrderId, panelFiles }) {
+  const factoryReference = buildFactoryReference({
+    shopifyOrderId,
+    jobId: job?.id,
+  });
+  const firstPanel = getFirstPanel(panelFiles);
+  const positionXml = buildPositionXml(firstPanel);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <root>
   <order>
-    <order_number>WANDINI-${xmlEscape(shopifyOrderId)}</order_number>
-    <reference>${xmlEscape(reference)}</reference>
-    <shipping_type>${xmlEscape(getShippingType(rawPayload))}</shipping_type>
+    <order_number>${xmlEscape(factoryReference)}</order_number>
+    <reference>${xmlEscape(factoryReference)}</reference>
+    <shipping_type>Standard</shipping_type>
     <shipping_from>
-      <company>${xmlEscape(shippingFrom.company)}</company>
-      <contact_person>${xmlEscape(shippingFrom.contactPerson)}</contact_person>
-      <street>${xmlEscape(shippingFrom.street)}</street>
-      <postcode>${xmlEscape(shippingFrom.postcode)}</postcode>
-      <city>${xmlEscape(shippingFrom.city)}</city>
-      <country>${xmlEscape(shippingFrom.country)}</country>
+      <company>${xmlEscape(NEXO_DEMO_SHIPPING_FROM.company)}</company>
+      <contact_person>${xmlEscape(NEXO_DEMO_SHIPPING_FROM.contactPerson)}</contact_person>
+      <street>${xmlEscape(NEXO_DEMO_SHIPPING_FROM.street)}</street>
+      <postcode>${xmlEscape(NEXO_DEMO_SHIPPING_FROM.postcode)}</postcode>
+      <city>${xmlEscape(NEXO_DEMO_SHIPPING_FROM.city)}</city>
+      <country>${xmlEscape(NEXO_DEMO_SHIPPING_FROM.country)}</country>
     </shipping_from>
     <shipping_to>
-      <company>${xmlEscape(shippingTo.company)}</company>
-      <contact_person>${xmlEscape(shippingTo.contactPerson)}</contact_person>
-      <street>${xmlEscape(shippingTo.street)}</street>
-      <postcode>${xmlEscape(shippingTo.postcode)}</postcode>
-      <city>${xmlEscape(shippingTo.city)}</city>
-      <country>${xmlEscape(shippingTo.country)}</country>
-      <phone>${xmlEscape(shippingTo.phone)}</phone>
+      <company>${xmlEscape(NEXO_DEMO_SHIPPING_TO.company)}</company>
+      <contact_person>${xmlEscape(NEXO_DEMO_SHIPPING_TO.contactPerson)}</contact_person>
+      <street>${xmlEscape(NEXO_DEMO_SHIPPING_TO.street)}</street>
+      <postcode>${xmlEscape(NEXO_DEMO_SHIPPING_TO.postcode)}</postcode>
+      <city>${xmlEscape(NEXO_DEMO_SHIPPING_TO.city)}</city>
+      <country>${xmlEscape(NEXO_DEMO_SHIPPING_TO.country)}</country>
+      <phone>${xmlEscape(NEXO_DEMO_SHIPPING_TO.phone)}</phone>
     </shipping_to>
   </order>
   <positions>
-${positionsXml}
+${positionXml}
   </positions>
 </root>`;
 }

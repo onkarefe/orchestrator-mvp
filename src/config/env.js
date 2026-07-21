@@ -172,6 +172,8 @@ const env = {
     true
   ),
   NEXO_CALLBACK_API_KEY: process.env.NEXO_CALLBACK_API_KEY ?? '',
+  NEXO_PRODUCT_SKU:
+    String(process.env.NEXO_PRODUCT_SKU ?? '').trim() || '1.14-1.3.10',
   PROCESSING_MIN_FREE_DISK_MB: integerFromEnv(
     'PROCESSING_MIN_FREE_DISK_MB',
     1024,
