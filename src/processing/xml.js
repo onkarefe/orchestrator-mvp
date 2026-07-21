@@ -1,25 +1,6 @@
 import env from '../config/env.js';
 import { buildFactoryReference } from '../utils/factoryReference.js';
 
-const NEXO_DEMO_SHIPPING_FROM = Object.freeze({
-  company: 'Werbeagentur XY GmbH',
-  contactPerson: '',
-  street: 'Musterstr. 4',
-  postcode: '12345',
-  city: 'Musterstadt',
-  country: 'DE',
-});
-
-const NEXO_DEMO_SHIPPING_TO = Object.freeze({
-  company: 'Musterkunde AG',
-  contactPerson: 'Martina Musterfrau',
-  street: 'Testweg 45',
-  postcode: '54321',
-  city: 'Testhausen',
-  country: 'DE',
-  phone: '01234-567890',
-});
-
 export function xmlEscape(value) {
   if (value === null || value === undefined) {
     return '';
@@ -31,6 +12,22 @@ export function xmlEscape(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&apos;');
+}
+
+function parseJsonIfNeeded(value) {
+  if (value === null || value === undefined || typeof value !== 'string') {
+    return value;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeText(value) {
+  return String(value ?? '').trim();
 }
 
 function formatMm(value) {
@@ -45,6 +42,97 @@ function formatMm(value) {
   }
 
   return String(Number(numberValue.toFixed(3)));
+}
+
+function getShippingType(rawPayload) {
+  const shippingLine = Array.isArray(rawPayload?.shipping_lines)
+    ? rawPayload.shipping_lines[0]
+    : null;
+
+  return (
+    normalizeText(shippingLine?.code) ||
+    normalizeText(shippingLine?.title) ||
+    'Standard'
+  );
+}
+
+function getShippingFrom() {
+  return {
+    company: env.NEXO_SHIPPING_FROM_COMPANY,
+    contactPerson: env.NEXO_SHIPPING_FROM_CONTACT_PERSON,
+    street: env.NEXO_SHIPPING_FROM_STREET,
+    postcode: env.NEXO_SHIPPING_FROM_POSTCODE,
+    city: env.NEXO_SHIPPING_FROM_CITY,
+    country: env.NEXO_SHIPPING_FROM_COUNTRY,
+  };
+}
+
+function isAddress(value) {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      Object.values(value).some((field) => normalizeText(field))
+  );
+}
+
+function getShippingAddress(rawPayload) {
+  return [
+    rawPayload?.shipping_address,
+    rawPayload?.billing_address,
+    rawPayload?.customer?.default_address,
+  ].find(isAddress) ?? {};
+}
+
+function getAddressFullName(address) {
+  return [address?.first_name, address?.last_name]
+    .map(normalizeText)
+    .filter(Boolean)
+    .join(' ');
+}
+
+function getShippingTo(rawPayload) {
+  const address = getShippingAddress(rawPayload);
+  const fullName = getAddressFullName(address);
+  const company =
+    normalizeText(address.company) || normalizeText(address.name) || fullName;
+  const contactPerson =
+    normalizeText(address.name) || fullName || company;
+  const shippingTo = {
+    company,
+    contactPerson,
+    street: [address.address1, address.address2]
+      .map(normalizeText)
+      .filter(Boolean)
+      .join(', '),
+    postcode: normalizeText(address.zip),
+    city: normalizeText(address.city),
+    country: normalizeText(address.country_code),
+    phone:
+      normalizeText(address.phone) ||
+      normalizeText(rawPayload?.phone) ||
+      normalizeText(rawPayload?.customer?.phone) ||
+      '0000',
+  };
+  const requiredFields = {
+    company: shippingTo.company,
+    contact_person: shippingTo.contactPerson,
+    street: shippingTo.street,
+    postcode: shippingTo.postcode,
+    city: shippingTo.city,
+    country: shippingTo.country,
+  };
+  const missingFields = Object.entries(requiredFields)
+    .filter(([, value]) => !value)
+    .map(([field]) => field);
+
+  if (missingFields.length > 0) {
+    throw new Error(
+      `Required NEXO shipping_to fields are missing: ${missingFields.join(', ')}`
+    );
+  }
+
+  return shippingTo;
 }
 
 function getFirstPanel(panelFiles) {
@@ -81,11 +169,19 @@ function buildPositionXml(panel) {
     </position>`;
 }
 
-export function buildOrderXml({ job, shopifyOrderId, panelFiles }) {
+export function buildOrderXml({ order, job, shopifyOrderId, panelFiles }) {
+  const rawPayload = parseJsonIfNeeded(order?.raw_payload_json);
+
+  if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
+    throw new Error('Shopify order payload is required for NEXO XML');
+  }
+
   const factoryReference = buildFactoryReference({
     shopifyOrderId,
     jobId: job?.id,
   });
+  const shippingFrom = getShippingFrom();
+  const shippingTo = getShippingTo(rawPayload);
   const firstPanel = getFirstPanel(panelFiles);
   const positionXml = buildPositionXml(firstPanel);
 
@@ -94,23 +190,23 @@ export function buildOrderXml({ job, shopifyOrderId, panelFiles }) {
   <order>
     <order_number>${xmlEscape(factoryReference)}</order_number>
     <reference>${xmlEscape(factoryReference)}</reference>
-    <shipping_type>Standard</shipping_type>
+    <shipping_type>${xmlEscape(getShippingType(rawPayload))}</shipping_type>
     <shipping_from>
-      <company>${xmlEscape(NEXO_DEMO_SHIPPING_FROM.company)}</company>
-      <contact_person>${xmlEscape(NEXO_DEMO_SHIPPING_FROM.contactPerson)}</contact_person>
-      <street>${xmlEscape(NEXO_DEMO_SHIPPING_FROM.street)}</street>
-      <postcode>${xmlEscape(NEXO_DEMO_SHIPPING_FROM.postcode)}</postcode>
-      <city>${xmlEscape(NEXO_DEMO_SHIPPING_FROM.city)}</city>
-      <country>${xmlEscape(NEXO_DEMO_SHIPPING_FROM.country)}</country>
+      <company>${xmlEscape(shippingFrom.company)}</company>
+      <contact_person>${xmlEscape(shippingFrom.contactPerson)}</contact_person>
+      <street>${xmlEscape(shippingFrom.street)}</street>
+      <postcode>${xmlEscape(shippingFrom.postcode)}</postcode>
+      <city>${xmlEscape(shippingFrom.city)}</city>
+      <country>${xmlEscape(shippingFrom.country)}</country>
     </shipping_from>
     <shipping_to>
-      <company>${xmlEscape(NEXO_DEMO_SHIPPING_TO.company)}</company>
-      <contact_person>${xmlEscape(NEXO_DEMO_SHIPPING_TO.contactPerson)}</contact_person>
-      <street>${xmlEscape(NEXO_DEMO_SHIPPING_TO.street)}</street>
-      <postcode>${xmlEscape(NEXO_DEMO_SHIPPING_TO.postcode)}</postcode>
-      <city>${xmlEscape(NEXO_DEMO_SHIPPING_TO.city)}</city>
-      <country>${xmlEscape(NEXO_DEMO_SHIPPING_TO.country)}</country>
-      <phone>${xmlEscape(NEXO_DEMO_SHIPPING_TO.phone)}</phone>
+      <company>${xmlEscape(shippingTo.company)}</company>
+      <contact_person>${xmlEscape(shippingTo.contactPerson)}</contact_person>
+      <street>${xmlEscape(shippingTo.street)}</street>
+      <postcode>${xmlEscape(shippingTo.postcode)}</postcode>
+      <city>${xmlEscape(shippingTo.city)}</city>
+      <country>${xmlEscape(shippingTo.country)}</country>
+      <phone>${xmlEscape(shippingTo.phone)}</phone>
     </shipping_to>
   </order>
   <positions>
