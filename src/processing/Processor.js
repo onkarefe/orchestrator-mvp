@@ -8,7 +8,11 @@ import {
 } from './artifactConsistency.js';
 import { createArtifactManifest } from './artifactManifest.js';
 import { calculateSafeCrop, getImageMetadata } from './image.js';
-import { createJobWorkspace, sanitizePathSegment } from './jobWorkspace.js';
+import {
+  createJobWorkspace,
+  isPathInside,
+  sanitizePathSegment,
+} from './jobWorkspace.js';
 import { resolveMasterPath } from './masterResolver.js';
 import { buildPanelPixelWidths, computePanelsFromOutputMm } from './panels.js';
 import { createPanelPdfFile } from './pdf.js';
@@ -65,6 +69,49 @@ async function moveFileWithoutOverwrite(sourcePath, destinationPath) {
   }
 
   await fs.unlink(sourcePath);
+}
+
+async function persistValidatedFactoryFiles({ workspace, fileEntries }) {
+  await fs.mkdir(workspace.factoryFilesDir, { recursive: true });
+
+  const persistedEntries = [];
+
+  for (const entry of fileEntries) {
+    const fileName = String(entry?.name ?? '').trim();
+
+    if (
+      !fileName ||
+      path.basename(fileName) !== fileName ||
+      !workspace.factoryFilesDir ||
+      !entry.filePath ||
+      !path.isAbsolute(entry.filePath)
+    ) {
+      throw new Error('Factory upload source entry is invalid');
+    }
+
+    const sourcePath = path.resolve(entry.filePath);
+    const destinationPath = path.resolve(workspace.factoryFilesDir, fileName);
+
+    if (
+      !isPathInside(sourcePath, workspace.workDir) ||
+      !isPathInside(destinationPath, workspace.factoryFilesDir) ||
+      !isPathInside(destinationPath, workspace.finalDir)
+    ) {
+      throw new Error('Factory upload source entry escaped job directories');
+    }
+
+    await fs.copyFile(
+      sourcePath,
+      destinationPath,
+      fsConstants.COPYFILE_EXCL
+    );
+    persistedEntries.push({
+      name: fileName,
+      filePath: destinationPath,
+    });
+  }
+
+  return persistedEntries;
 }
 
 function validateJob(job) {
@@ -184,6 +231,10 @@ export async function processJobToZip({ order, job }) {
 
   await createZipFromFileEntries(workspace.workZipPath, fileEntries);
   await moveFileWithoutOverwrite(workspace.workZipPath, workspace.finalZipPath);
+  const persistedFileEntries = await persistValidatedFactoryFiles({
+    workspace,
+    fileEntries,
+  });
   const manifestResult = await createArtifactManifest({
     order,
     job,
@@ -194,12 +245,15 @@ export async function processJobToZip({ order, job }) {
     panelFiles,
     panelInfo,
     xmlFileName,
-    fileEntries,
+    fileEntries: persistedFileEntries,
     widthMm,
     heightMm,
     cropRatio,
     validationResult,
   });
+  const xmlPath = persistedFileEntries.find(
+    (entry) => entry.name === xmlFileName
+  )?.filePath;
 
   return {
     zipPath: workspace.finalZipPath,
@@ -211,8 +265,12 @@ export async function processJobToZip({ order, job }) {
     validationResult,
     panelFiles,
     panelInfo,
-    fileCount: fileEntries.length,
+    fileCount: persistedFileEntries.length,
     artifactDir: workspace.finalDir,
+    factoryFilesDir: workspace.factoryFilesDir,
+    xmlFileName,
+    xmlPath,
+    factoryFileEntries: persistedFileEntries,
     workDir: workspace.workDir,
     runId: workspace.runId,
   };

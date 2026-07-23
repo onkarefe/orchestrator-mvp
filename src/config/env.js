@@ -1,5 +1,6 @@
 import 'dotenv/config';
 
+import { parseFtpUploadOrderAllowlist } from './ftpUpload.js';
 import { parseShopifyWriteOrderAllowlist } from './shopifyAdmin.js';
 
 function booleanFromEnv(name, defaultValue) {
@@ -92,6 +93,9 @@ function stringFromEnv(name, defaultValue = '') {
 const shopifyWriteOrderAllowlist = parseShopifyWriteOrderAllowlist(
   process.env.SHOPIFY_WRITE_ORDER_ALLOWLIST
 );
+const ftpUploadOrderAllowlist = parseFtpUploadOrderAllowlist(
+  process.env.FTP_UPLOAD_ORDER_ALLOWLIST
+);
 
 const env = {
   PORT: Number(process.env.PORT || 3000),
@@ -141,6 +145,31 @@ const env = {
     100
   ),
   FTP_UPLOAD_ENABLED: booleanFromEnv('FTP_UPLOAD_ENABLED', false),
+  FTP_PROTOCOL: stringFromEnv('FTP_PROTOCOL', 'ftp').toLowerCase(),
+  FTP_HOST: stringFromEnv('FTP_HOST'),
+  FTP_PORT: positiveIntegerFromEnv('FTP_PORT', 21),
+  FTP_USERNAME: stringFromEnv('FTP_USERNAME'),
+  FTP_PASSWORD: process.env.FTP_PASSWORD ?? '',
+  FTP_REMOTE_DIR: stringFromEnv('FTP_REMOTE_DIR'),
+  FTP_PASSIVE: booleanFromEnv('FTP_PASSIVE', true),
+  FTP_SECURE: booleanFromEnv('FTP_SECURE', false),
+  FTP_UPLOAD_MODE: stringFromEnv('FTP_UPLOAD_MODE', 'files').toLowerCase(),
+  FTP_TEMP_SUFFIX: stringFromEnv('FTP_TEMP_SUFFIX', '.uploading'),
+  FTP_UPLOAD_ORDER_ALLOWLIST: ftpUploadOrderAllowlist.orderIds,
+  FTP_UPLOAD_ORDER_ALLOWLIST_INVALID_ENTRIES:
+    ftpUploadOrderAllowlist.invalidEntries,
+  FTP_UPLOAD_TASK_MAX_ATTEMPTS: positiveIntegerFromEnv(
+    'FTP_UPLOAD_TASK_MAX_ATTEMPTS',
+    3
+  ),
+  FTP_UPLOAD_CONNECT_TIMEOUT_MS: positiveIntegerFromEnv(
+    'FTP_UPLOAD_CONNECT_TIMEOUT_MS',
+    30000
+  ),
+  FTP_UPLOAD_TRANSFER_TIMEOUT_MS: positiveIntegerFromEnv(
+    'FTP_UPLOAD_TRANSFER_TIMEOUT_MS',
+    120000
+  ),
   SHOPIFY_SHOP_DOMAIN: process.env.SHOPIFY_SHOP_DOMAIN ?? '',
   SHOPIFY_ADMIN_API_VERSION:
     process.env.SHOPIFY_ADMIN_API_VERSION || '2026-01',

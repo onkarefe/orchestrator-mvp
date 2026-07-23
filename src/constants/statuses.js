@@ -4,6 +4,7 @@ export const STATUS_GROUPS = Object.freeze({
   WEBHOOK_PROCESSING: 'webhook_processing',
   ARTIFACT: 'artifact',
   FACTORY_CALLBACK_PROCESSING: 'factory_callback_processing',
+  FACTORY_UPLOAD_TASK: 'factory_upload_task',
   SHOPIFY_UPDATE_TASK: 'shopify_update_task',
 });
 
@@ -67,6 +68,15 @@ export const SHOPIFY_UPDATE_TASK_STATUSES = Object.freeze({
   MANUAL_REVIEW: 'manual_review',
 });
 
+export const FACTORY_UPLOAD_TASK_STATUSES = Object.freeze({
+  PENDING: 'pending',
+  UPLOADING: 'uploading',
+  UPLOADED: 'uploaded',
+  FAILED: 'failed',
+  SKIPPED: 'skipped',
+  SUPPRESSED: 'suppressed',
+});
+
 export const STATUS_VALUES_BY_GROUP = Object.freeze({
   [STATUS_GROUPS.ORDER]: Object.freeze(Object.values(ORDER_STATUSES)),
   [STATUS_GROUPS.JOB]: Object.freeze(Object.values(JOB_STATUSES)),
@@ -76,6 +86,9 @@ export const STATUS_VALUES_BY_GROUP = Object.freeze({
   [STATUS_GROUPS.ARTIFACT]: Object.freeze(Object.values(ARTIFACT_STATUSES)),
   [STATUS_GROUPS.FACTORY_CALLBACK_PROCESSING]: Object.freeze(
     Object.values(FACTORY_CALLBACK_PROCESSING_STATUSES)
+  ),
+  [STATUS_GROUPS.FACTORY_UPLOAD_TASK]: Object.freeze(
+    Object.values(FACTORY_UPLOAD_TASK_STATUSES)
   ),
   [STATUS_GROUPS.SHOPIFY_UPDATE_TASK]: Object.freeze(
     Object.values(SHOPIFY_UPDATE_TASK_STATUSES)
@@ -89,6 +102,7 @@ export default {
   WEBHOOK_PROCESSING_STATUSES,
   ARTIFACT_STATUSES,
   FACTORY_CALLBACK_PROCESSING_STATUSES,
+  FACTORY_UPLOAD_TASK_STATUSES,
   SHOPIFY_UPDATE_TASK_STATUSES,
   STATUS_VALUES_BY_GROUP,
 };

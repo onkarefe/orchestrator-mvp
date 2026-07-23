@@ -36,6 +36,17 @@ function normalizeKey(key) {
   return String(key).trim().toLowerCase().replace(/[-\s]+/g, '_');
 }
 
+export function redactSensitiveText(value) {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  return value.replace(
+    /\b(ftps?|sftp):\/\/([^/@\s:]+)(?::[^@\s]*)?@/gi,
+    '$1://[REDACTED]@'
+  );
+}
+
 export function isSensitiveKey(key) {
   const normalizedKey = normalizeKey(key);
 
@@ -77,6 +88,10 @@ function errorToObject(error) {
 }
 
 function cloneWithOptionalRedaction(value, { redactSecrets }, seen) {
+  if (typeof value === 'string') {
+    return redactSensitiveText(value);
+  }
+
   if (value === null || value === undefined || typeof value !== 'object') {
     return value;
   }
@@ -139,5 +154,6 @@ export default {
   CIRCULAR_VALUE,
   isSensitiveKey,
   redact,
+  redactSensitiveText,
   safeErrorForLog,
 };

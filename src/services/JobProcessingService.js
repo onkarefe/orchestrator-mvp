@@ -16,7 +16,9 @@ import {
 import { findOrderById, updateOrderStatus } from '../models/OrderModel.js';
 import { processJobToZip } from '../processing/Processor.js';
 import { checkProcessingDiskSpace } from './DiskGuardService.js';
+import { ensureAndProcessFactoryUpload } from './FactoryUploadService.js';
 import { logError, logInfo } from './LogService.js';
+import { safeErrorForLog } from '../utils/redact.js';
 
 const MAX_WORKER_ID_LENGTH = 191;
 const ORDER_STATUS_QUEUED = 'queued';
@@ -280,7 +282,10 @@ async function processClaimedJob(job, { workerId = getWorkerId() } = {}) {
       validationStatus: result.validationResult?.validationStatus ?? 'pending',
     });
 
-    await markJobCompletedWithArtifactManifest(job.id, result.manifestPath);
+    const completedJob = await markJobCompletedWithArtifactManifest(
+      job.id,
+      result.manifestPath
+    );
     order = await refreshOrderStatusFromJobs(order.id) ?? order;
 
     await logInfo({
@@ -299,6 +304,37 @@ async function processClaimedJob(job, { workerId = getWorkerId() } = {}) {
       },
     });
 
+    let factoryUpload = null;
+
+    try {
+      factoryUpload = await ensureAndProcessFactoryUpload({
+        order,
+        job: completedJob,
+        artifact,
+        workerId,
+      });
+    } catch (uploadIntegrationError) {
+      factoryUpload = {
+        disposition: 'integration_failed',
+        reason:
+          uploadIntegrationError.code ??
+          'factory_upload_integration_failed',
+      };
+
+      await logError({
+        scopeType: 'job',
+        orderId: order.id,
+        jobId: job.id,
+        step: 'factory_upload.integration_failed',
+        message:
+          'Factory upload task integration failed without changing job completion',
+        detailsJson: {
+          artifactId: artifact.id,
+          error: safeErrorForLog(uploadIntegrationError),
+        },
+      });
+    }
+
     return {
       jobId: job.id,
       orderId: order.id,
@@ -308,6 +344,13 @@ async function processClaimedJob(job, { workerId = getWorkerId() } = {}) {
       manifestPath: result.manifestPath,
       checksum: result.zipChecksum,
       validationStatus: result.validationResult?.validationStatus ?? null,
+      factoryUpload: factoryUpload
+        ? {
+            taskId: factoryUpload.task?.id ?? null,
+            disposition: factoryUpload.disposition ?? null,
+            reason: factoryUpload.reason ?? null,
+          }
+        : null,
     };
   } catch (error) {
     const errorMessage = error.message || 'job_processing_failed';

@@ -33,6 +33,7 @@
             <th scope="col">Locked</th>
             <th scope="col">Manual review</th>
             <th scope="col">Last error</th>
+            <th scope="col">Factory upload</th>
             <th scope="col">Manifest</th>
             <th scope="col">Created</th>
             <th scope="col">Started</th>
@@ -43,7 +44,7 @@
         <tbody>
           <% if (jobs.length === 0) { %>
             <tr>
-              <td class="empty-state" colspan="13">No jobs recorded yet.</td>
+              <td class="empty-state" colspan="14">No jobs recorded yet.</td>
             </tr>
           <% } %>
 
@@ -69,6 +70,14 @@
               </td>
               <td><%= display(job.manual_review_reason) %></td>
               <td><%= display(job.last_error) %></td>
+              <td>
+                <% if (job.factory_upload) { %>
+                  <span class="status-badge <%= statusClass(job.factory_upload.status) %>"><%= display(job.factory_upload.status) %></span>
+                  <span class="cell-meta"><%= job.factory_upload.status === 'pending' ? 'Waiting for FTP readiness' : display(job.factory_upload.uploaded_at || job.factory_upload.suppressed_reason || job.factory_upload.last_error) %></span>
+                <% } else { %>
+                  &mdash;
+                <% } %>
+              </td>
               <td class="mono"><%= display(job.artifact_manifest_path) %></td>
               <td class="table-date"><%= display(job.created_at) %></td>
               <td class="table-date"><%= display(job.started_at) %></td>

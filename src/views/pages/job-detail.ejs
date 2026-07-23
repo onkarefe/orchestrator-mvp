@@ -142,6 +142,65 @@
   <section class="table-card">
     <div class="table-card-header">
       <div>
+        <h2>Factory uploads</h2>
+        <p class="muted"><%= factoryUploadTasks.length %> delivery task<%= factoryUploadTasks.length === 1 ? '' : 's' %></p>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Task</th>
+            <th scope="col">Status</th>
+            <th scope="col">Attempts</th>
+            <th scope="col">Remote directory</th>
+            <th scope="col">Uploaded</th>
+            <th scope="col">Reason / error</th>
+            <th scope="col">Files</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (factoryUploadTasks.length === 0) { %>
+            <tr>
+              <td class="empty-state" colspan="7">No factory upload task recorded yet.</td>
+            </tr>
+          <% } %>
+          <% factoryUploadTasks.forEach((task) => { %>
+            <tr>
+              <td>
+                <span class="cell-title mono">#<%= task.id %></span>
+                <span class="cell-meta">Artifact #<%= task.artifact_id %></span>
+              </td>
+              <td><span class="status-badge <%= statusClass(task.status) %>"><%= display(task.status) %></span></td>
+              <td><%= display(task.attempt_count) %> / <%= display(task.max_attempts) %></td>
+              <td class="mono"><%= display(task.remote_dir) %></td>
+              <td class="table-date"><%= display(task.uploaded_at) %></td>
+              <td><%= task.status === 'pending' ? 'Waiting for FTP readiness' : display(task.suppressed_reason || task.last_error) %></td>
+              <td>
+                <% const uploadedFiles = Array.isArray(task.uploaded_files_json) ? task.uploaded_files_json : []; %>
+                <% if (uploadedFiles.length === 0) { %>
+                  &mdash;
+                <% } else { %>
+                  <details>
+                    <summary><%= uploadedFiles.length %> file<%= uploadedFiles.length === 1 ? '' : 's' %></summary>
+                    <ul>
+                      <% uploadedFiles.forEach((file) => { %>
+                        <li class="mono"><%= display(file.file_name) %></li>
+                      <% }) %>
+                    </ul>
+                  </details>
+                <% } %>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="table-card">
+    <div class="table-card-header">
+      <div>
         <h2>Artifacts</h2>
         <p class="muted"><%= artifacts.length %> generated file<%= artifacts.length === 1 ? '' : 's' %></p>
       </div>

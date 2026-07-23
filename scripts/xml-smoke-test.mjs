@@ -45,8 +45,14 @@ function buildPanelFiles({ shopifyOrderId, panelCount, panelWidthMm, heightMm })
   }));
 }
 
-function assertPanelCase({ widthMm, expectedPanelCount, expectedPanelWidthMm }) {
+function assertPanelCase({
+  jobId,
+  widthMm,
+  expectedPanelCount,
+  expectedPanelWidthMm,
+}) {
   const shopifyOrderId = '7217548394776';
+  const factoryReference = `WANDINI-S${shopifyOrderId}-J${jobId}`;
   const heightMm = 2000;
   const panelInfo = computePanelsFromOutputMm(widthMm);
   const panelWidthMm = panelInfo.panelWidthCm * 10;
@@ -60,6 +66,7 @@ function assertPanelCase({ widthMm, expectedPanelCount, expectedPanelWidthMm }) 
     order,
     job: {
       ...job,
+      id: jobId,
       width_mm: widthMm,
       height_mm: heightMm,
     },
@@ -72,6 +79,10 @@ function assertPanelCase({ widthMm, expectedPanelCount, expectedPanelWidthMm }) 
   assert.equal(panelFiles.length, expectedPanelCount);
   assert.equal((xml.match(/<position>/g) ?? []).length, 1);
   assert.equal((xml.match(/<file type="ftp">/g) ?? []).length, expectedPanelCount);
+  assert.ok(
+    xml.includes(`<order_number>${factoryReference}</order_number>`)
+  );
+  assert.ok(xml.includes(`<reference>${factoryReference}</reference>`));
   assert.match(xml, new RegExp(`<width unit="mm">${expectedPanelWidthMm}</width>`));
   assert.match(xml, new RegExp(`<height unit="mm">${heightMm}</height>`));
   assert.match(xml, new RegExp(`<variants>${expectedPanelCount}</variants>`));
@@ -81,11 +92,13 @@ function assertPanelCase({ widthMm, expectedPanelCount, expectedPanelWidthMm }) 
 
 const cases = [
   assertPanelCase({
+    jobId: 9001,
     widthMm: 5000,
     expectedPanelCount: 8,
     expectedPanelWidthMm: 625,
   }),
   assertPanelCase({
+    jobId: 9002,
     widthMm: 4725,
     expectedPanelCount: 7,
     expectedPanelWidthMm: 675,

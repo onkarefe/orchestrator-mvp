@@ -75,6 +75,7 @@ export function buildJobWorkspace({
     panelsDir: path.join(workDir, 'panels'),
     packageDir: path.join(workDir, 'package'),
     finalDir,
+    factoryFilesDir: path.join(finalDir, 'factory-files', safeRunId),
     workZipPath: path.join(workDir, 'package', zipFileName),
     finalZipPath: path.join(finalDir, zipFileName),
     manifestPath: path.join(finalDir, manifestFileName),
