@@ -1,4 +1,5 @@
 import {
+  claimFailedWebhook,
   createWebhook,
   findWebhookByDeliveryId,
   findWebhookById,
@@ -72,6 +73,10 @@ export async function markWebhookFailed(id, errorMessage) {
   });
 
   return webhook;
+}
+
+export async function claimFailedWebhookRetry(id) {
+  return claimFailedWebhook(id);
 }
 
 export async function markWebhookDuplicate(
@@ -153,6 +158,7 @@ export function getWebhooks(filters) {
 
 export default {
   recordWebhook,
+  claimFailedWebhookRetry,
   markWebhookProcessed,
   markWebhookFailed,
   markWebhookDuplicate,

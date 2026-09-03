@@ -108,8 +108,15 @@ export async function findWebhookByDeliveryId(deliveryId, db = pool) {
     `SELECT * FROM webhooks
     WHERE delivery_id = ?
       AND (hmac_valid = 1 OR hmac_valid IS NULL)
-      AND processing_status IN (?, ?, ?, ?)
-    ORDER BY id ASC
+      AND processing_status IN (?, ?, ?, ?, ?)
+    ORDER BY CASE processing_status
+      WHEN ? THEN 0
+      WHEN ? THEN 1
+      WHEN ? THEN 2
+      WHEN ? THEN 3
+      WHEN ? THEN 4
+      ELSE 5
+    END, id DESC
     LIMIT 1`,
     [
       deliveryId,
@@ -117,10 +124,41 @@ export async function findWebhookByDeliveryId(deliveryId, db = pool) {
       WEBHOOK_PROCESSING_STATUSES.PROCESSING,
       WEBHOOK_PROCESSING_STATUSES.PROCESSED,
       WEBHOOK_PROCESSING_STATUSES.DUPLICATE,
+      WEBHOOK_PROCESSING_STATUSES.FAILED,
+      WEBHOOK_PROCESSING_STATUSES.PROCESSED,
+      WEBHOOK_PROCESSING_STATUSES.PROCESSING,
+      WEBHOOK_PROCESSING_STATUSES.PENDING,
+      WEBHOOK_PROCESSING_STATUSES.DUPLICATE,
+      WEBHOOK_PROCESSING_STATUSES.FAILED,
     ]
   );
 
   return normalizeWebhook(rows[0]);
+}
+
+export async function claimFailedWebhook(id, db = pool) {
+  const executor = getExecutor(db);
+  const [result] = await executor.execute(
+    `UPDATE webhooks
+    SET status = ?,
+      processing_status = ?,
+      error_message = NULL,
+      processed_at = NULL
+    WHERE id = ?
+      AND processing_status = ?`,
+    [
+      WEBHOOK_PROCESSING_STATUSES.PROCESSING,
+      WEBHOOK_PROCESSING_STATUSES.PROCESSING,
+      id,
+      WEBHOOK_PROCESSING_STATUSES.FAILED,
+    ]
+  );
+
+  if (result.affectedRows !== 1) {
+    return null;
+  }
+
+  return findWebhookById(id, executor);
 }
 
 export async function findOriginalWebhookByShopifyOrderId(
@@ -220,6 +258,7 @@ export async function updateWebhookDuplicate(
 
 export default {
   createWebhook,
+  claimFailedWebhook,
   findWebhookById,
   findWebhookByDeliveryId,
   findOriginalWebhookByShopifyOrderId,
