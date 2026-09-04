@@ -29,11 +29,12 @@ function formatManualReviewReason(validation) {
 
 async function createJobWithDuplicateFallback(
   jobData,
-  { shopifyOrderId, shopifyLineItemId, db }
+  { shopifyOrderId, shopifyLineItemId, db },
+  { createJobFn = createJob, findJobFn = findJobByShopifyOrderAndLineItem } = {}
 ) {
   try {
     return {
-      job: await createJob(jobData, db),
+      job: await createJobFn(jobData, db),
       duplicate: false,
     };
   } catch (error) {
@@ -41,7 +42,7 @@ async function createJobWithDuplicateFallback(
       throw error;
     }
 
-    const existingJob = await findJobByShopifyOrderAndLineItem(
+    const existingJob = await findJobFn(
       shopifyOrderId,
       shopifyLineItemId,
       db
@@ -61,9 +62,15 @@ async function createJobWithDuplicateFallback(
 export async function createConfiguratorJobFromLineItem(
   orderId,
   lineItem,
-  { shopifyOrderId = null, db = undefined } = {}
+  { shopifyOrderId = null, db = undefined, runtime = {} } = {}
 ) {
-  const validation = validateConfiguratorLineItem(lineItem);
+  const validateLineItem =
+    runtime.validateConfiguratorLineItem ?? validateConfiguratorLineItem;
+  const findJob =
+    runtime.findJobByShopifyOrderAndLineItem ??
+    findJobByShopifyOrderAndLineItem;
+  const createJobFn = runtime.createJob ?? createJob;
+  const validation = validateLineItem(lineItem);
 
   if (!validation.isConfigurable) {
     return {
@@ -77,7 +84,7 @@ export async function createConfiguratorJobFromLineItem(
   }
 
   const shopifyLineItemId = lineItem.id ?? null;
-  const existingJob = await findJobByShopifyOrderAndLineItem(
+  const existingJob = await findJob(
     shopifyOrderId,
     shopifyLineItemId,
     db
@@ -125,7 +132,8 @@ export async function createConfiguratorJobFromLineItem(
           },
         },
       },
-      { shopifyOrderId, shopifyLineItemId, db }
+      { shopifyOrderId, shopifyLineItemId, db },
+      { createJobFn, findJobFn: findJob }
     );
 
     if (creationResult.duplicate) {
@@ -173,7 +181,8 @@ export async function createConfiguratorJobFromLineItem(
       },
       status: JOB_STATUSES.PENDING,
     },
-    { shopifyOrderId, shopifyLineItemId, db }
+    { shopifyOrderId, shopifyLineItemId, db },
+    { createJobFn, findJobFn: findJob }
   );
 
   if (creationResult.duplicate) {

@@ -30,6 +30,7 @@ import {
 } from '../models/FactoryUploadTaskModel.js';
 import { findJobById } from '../models/JobModel.js';
 import { findOrderById } from '../models/OrderModel.js';
+import { listOrderLineItemsByOrderId } from '../models/OrderLineItemModel.js';
 import { isPathInside } from '../processing/jobWorkspace.js';
 import {
   redactSensitiveText,
@@ -37,6 +38,7 @@ import {
 } from '../utils/redact.js';
 import FactoryFtpClient, { FactoryFtpError } from './FactoryFtpClient.js';
 import { ensureFactoryUploadTask } from './FactoryUploadTaskService.js';
+import { evaluateFactoryDispatchGate } from './FactoryDispatchGateService.js';
 import { logError, logInfo, logWarning } from './LogService.js';
 
 class FactoryUploadSafetyError extends Error {
@@ -385,7 +387,14 @@ function getTaskReadinessReason({ task, config }) {
   return getFtpConfigurationReadinessReason(config);
 }
 
-function getTaskSafetyDisposition({ task, order, job, artifact, config }) {
+function getTaskSafetyDisposition({
+  task,
+  order,
+  job,
+  artifact,
+  orderLineItems,
+  config,
+}) {
   if (!order || !job || !artifact) {
     return {
       status: FACTORY_UPLOAD_TASK_STATUSES.SKIPPED,
@@ -403,6 +412,18 @@ function getTaskSafetyDisposition({ task, order, job, artifact, config }) {
     return {
       status: FACTORY_UPLOAD_TASK_STATUSES.SKIPPED,
       reason: 'factory_upload_identity_mismatch',
+    };
+  }
+
+  const dispatchGate = evaluateFactoryDispatchGate({
+    order,
+    lineItems: orderLineItems,
+  });
+
+  if (!dispatchGate.allowed) {
+    return {
+      status: FACTORY_UPLOAD_TASK_STATUSES.SKIPPED,
+      reason: dispatchGate.reason,
     };
   }
 
@@ -675,16 +696,18 @@ export async function processClaimedFactoryUploadTask({
     return recordNotReady(task, readinessReason, workerId);
   }
 
-  const [order, job, artifact] = await Promise.all([
+  const [order, job, artifact, orderLineItems] = await Promise.all([
     findOrderById(task.order_id),
     findJobById(task.job_id),
     findArtifactById(task.artifact_id),
+    listOrderLineItemsByOrderId(task.order_id),
   ]);
   const safetyDisposition = getTaskSafetyDisposition({
     task,
     order,
     job,
     artifact,
+    orderLineItems,
     config,
   });
 
@@ -912,6 +935,13 @@ export async function ensureAndProcessFactoryUpload({
     artifact,
     config,
   });
+
+  if (!ensured.task) {
+    return {
+      ...ensured,
+      disposition: 'blocked',
+    };
+  }
 
   if (ensured.task.status !== FACTORY_UPLOAD_TASK_STATUSES.PENDING) {
     return {

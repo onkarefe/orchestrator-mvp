@@ -132,6 +132,7 @@ const env = {
     'CONFIGURATOR_REQUIRED_SKU_PREFIXES',
     ['wandini-']
   ),
+  ACCESSORY_SKUS: csvFromEnv('ACCESSORY_SKUS', []),
   CONFIGURATOR_MAX_OUTPUT_WIDTH_MM: positiveNumberFromEnv(
     'CONFIGURATOR_MAX_OUTPUT_WIDTH_MM',
     20000

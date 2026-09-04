@@ -8,7 +8,13 @@ import {
   updateOrderStatus,
 } from '../models/OrderModel.js';
 import { updateJobManualReview } from '../models/JobModel.js';
+import {
+  createOrderLineItem,
+  listOrderLineItemsByOrderId,
+} from '../models/OrderLineItemModel.js';
+import { LINE_ITEM_CLASSIFICATIONS } from '../constants/lineItemRouting.js';
 import { createConfiguratorJobFromLineItem } from './JobService.js';
+import { classifyShopifyLineItem } from './LineItemRoutingService.js';
 import { logError, logInfo } from './LogService.js';
 
 const ORDER_BLOCKED_BY_MANUAL_REVIEW_REASON =
@@ -72,6 +78,10 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
     );
 
     if (existingOrder) {
+      const existingLineItems = await listOrderLineItemsByOrderId(
+        existingOrder.id,
+        connection
+      );
       await connection.commit();
       transactionStarted = false;
 
@@ -93,6 +103,7 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
         duplicate: true,
         skippedDuplicateJobs: [],
         manualReviewJobs: [],
+        lineItems: existingLineItems,
       };
     }
 
@@ -123,10 +134,53 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
     const jobs = [];
     const skippedDuplicateJobs = [];
     const manualReviewJobs = [];
+    const lineItemRecords = [];
     const manualReviewReasons = new Set();
     const lineItems = Array.isArray(payload.line_items) ? payload.line_items : [];
 
-    for (const lineItem of lineItems) {
+    for (const [sourcePosition, lineItem] of lineItems.entries()) {
+      const routing = classifyShopifyLineItem(lineItem);
+      const persisted = await createOrderLineItem(
+        {
+          orderId: order.id,
+          shopifyOrderId,
+          shopifyLineItemId: lineItem?.id ?? null,
+          sourcePosition,
+          sku:
+            typeof lineItem?.sku === 'string' && lineItem.sku.trim()
+              ? lineItem.sku.trim()
+              : null,
+          title: lineItem?.title ?? lineItem?.name ?? null,
+          quantity:
+            Number.isSafeInteger(lineItem?.quantity) && lineItem.quantity >= 0
+              ? lineItem.quantity
+              : 0,
+          classification: routing.classification,
+          routingState: routing.routingState,
+          routingReason: routing.routingReason,
+        },
+        connection
+      );
+
+      lineItemRecords.push(persisted.lineItem);
+      logEvents.push({
+        scopeType: 'order',
+        orderId: order.id,
+        step: 'order.line_item_classified',
+        message: 'Shopify line item classified for orchestration',
+        detailsJson: {
+          shopifyLineItemId: persisted.lineItem.shopify_line_item_id,
+          sourcePosition,
+          classification: persisted.lineItem.classification,
+          routingState: persisted.lineItem.routing_state,
+          routingReason: persisted.lineItem.routing_reason,
+        },
+      });
+
+      if (routing.classification !== LINE_ITEM_CLASSIFICATIONS.WALLPAPER) {
+        continue;
+      }
+
       const result = await createConfiguratorJobFromLineItem(
         order.id,
         lineItem,
@@ -276,6 +330,7 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
       duplicate: false,
       skippedDuplicateJobs,
       manualReviewJobs,
+      lineItems: lineItemRecords,
     };
   } catch (error) {
     if (transactionStarted) {
@@ -287,6 +342,9 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
       const existingOrder = await findOrderByShopifyOrderId(shopifyOrderId);
 
       if (existingOrder) {
+        const existingLineItems = await listOrderLineItemsByOrderId(
+          existingOrder.id
+        );
         await logInfo({
           scopeType: 'order',
           orderId: existingOrder.id,
@@ -305,6 +363,7 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
           duplicate: true,
           skippedDuplicateJobs: [],
           manualReviewJobs: [],
+          lineItems: existingLineItems,
         };
       }
     }

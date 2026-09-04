@@ -7,6 +7,8 @@ import {
   findFactoryUploadTaskByArtifactId,
   requeueTemporarilySuppressedFactoryUploadTask,
 } from '../models/FactoryUploadTaskModel.js';
+import { listOrderLineItemsByOrderId } from '../models/OrderLineItemModel.js';
+import { evaluateFactoryDispatchGate } from './FactoryDispatchGateService.js';
 import { logInfo, logWarning } from './LogService.js';
 
 export const FACTORY_UPLOAD_SKIP_REASONS = Object.freeze({
@@ -102,9 +104,51 @@ export async function ensureFactoryUploadTask({
   job,
   artifact,
   config = env,
+  orderLineItems,
+  runtime = {},
 } = {}) {
+  const listPersistedLineItems =
+    runtime.listOrderLineItemsByOrderId ?? listOrderLineItemsByOrderId;
+  const findTask =
+    runtime.findFactoryUploadTaskByArtifactId ??
+    findFactoryUploadTaskByArtifactId;
+  const requeueTask =
+    runtime.requeueTemporarilySuppressedFactoryUploadTask ??
+    requeueTemporarilySuppressedFactoryUploadTask;
+  const createTask = runtime.createFactoryUploadTask ?? createFactoryUploadTask;
+  const writeInfoLog = runtime.logInfo ?? logInfo;
+  const writeWarningLog = runtime.logWarning ?? logWarning;
   const identity = assertFactoryUploadIdentity({ order, job, artifact });
-  const existingTask = await findFactoryUploadTaskByArtifactId(
+  const persistedLineItems = Array.isArray(orderLineItems)
+    ? orderLineItems
+    : await listPersistedLineItems(identity.orderId);
+  const dispatchGate = evaluateFactoryDispatchGate({
+    order,
+    lineItems: persistedLineItems,
+  });
+
+  if (!dispatchGate.allowed) {
+    await writeWarningLog({
+      scopeType: 'order',
+      orderId: identity.orderId,
+      jobId: identity.jobId,
+      step: 'factory_upload.order_line_item_gate_blocked',
+      message: 'Factory upload task creation blocked by order line-item gate',
+      detailsJson: {
+        artifactId: identity.artifactId,
+        reason: dispatchGate.reason,
+      },
+    });
+
+    return {
+      task: null,
+      created: false,
+      blocked: true,
+      reason: dispatchGate.reason,
+    };
+  }
+
+  const existingTask = await findTask(
     identity.artifactId
   );
 
@@ -115,7 +159,7 @@ export async function ensureFactoryUploadTask({
         existingTask.suppressed_reason
       )
     ) {
-      const requeued = await requeueTemporarilySuppressedFactoryUploadTask(
+      const requeued = await requeueTask(
         existingTask.id
       );
 
@@ -147,13 +191,13 @@ export async function ensureFactoryUploadTask({
   let task;
 
   try {
-    task = await createFactoryUploadTask(taskDraft);
+    task = await createTask(taskDraft);
   } catch (error) {
     if (!isDuplicateKeyError(error)) {
       throw error;
     }
 
-    task = await findFactoryUploadTaskByArtifactId(identity.artifactId);
+    task = await findTask(identity.artifactId);
     assertExistingTaskCompatible(task, identity);
 
     return {
@@ -162,7 +206,7 @@ export async function ensureFactoryUploadTask({
     };
   }
 
-  await logInfo({
+  await writeInfoLog({
     scopeType: 'job',
     orderId: identity.orderId,
     jobId: identity.jobId,
@@ -179,7 +223,7 @@ export async function ensureFactoryUploadTask({
   if (
     task.status === FACTORY_UPLOAD_TASK_STATUSES.SKIPPED
   ) {
-    await logWarning({
+    await writeWarningLog({
       scopeType: 'job',
       orderId: identity.orderId,
       jobId: identity.jobId,

@@ -159,39 +159,35 @@ function checkMasterFile(masterAssetId, resolveMasterPathFn) {
 
 export function validateConfiguratorLineItem(
   lineItem,
-  { resolveMasterPathFn = resolveMasterPath, checkMasterFileExists = true } = {}
+  {
+    resolveMasterPathFn = resolveMasterPath,
+    checkMasterFileExists = true,
+    configuratorSkuPrefixes = env.CONFIGURATOR_REQUIRED_SKU_PREFIXES,
+  } = {}
 ) {
   const payloadProperty = findConfiguratorPayloadProperty(lineItem);
-  const configuratorSkuRequired = isConfiguratorSkuRequired(lineItem?.sku);
+  const configuratorSkuRequired = isConfiguratorSkuRequired(
+    lineItem?.sku,
+    configuratorSkuPrefixes
+  );
+
+  if (!configuratorSkuRequired) {
+    return {
+      isConfigurable: false,
+      ok: true,
+      reason: null,
+      errors: [],
+      configuratorPayload: null,
+      masterPath: null,
+    };
+  }
 
   if (!payloadProperty || !hasConfiguratorPayloadValue(payloadProperty)) {
-    if (configuratorSkuRequired) {
-      return {
-        isConfigurable: true,
-        ok: false,
-        reason: MANUAL_REVIEW_REASONS.MISSING_CONFIGURATOR_PAYLOAD,
-        errors: [MANUAL_REVIEW_REASONS.MISSING_CONFIGURATOR_PAYLOAD],
-        configuratorPayload: null,
-        masterPath: null,
-      };
-    }
-
-    if (!payloadProperty) {
-      return {
-        isConfigurable: false,
-        ok: true,
-        reason: null,
-        errors: [],
-        configuratorPayload: null,
-        masterPath: null,
-      };
-    }
-
     return {
       isConfigurable: true,
       ok: false,
-      reason: MANUAL_REVIEW_REASONS.INVALID_CONFIGURATOR_PAYLOAD,
-      errors: [MANUAL_REVIEW_REASONS.INVALID_CONFIGURATOR_PAYLOAD],
+      reason: MANUAL_REVIEW_REASONS.MISSING_CONFIGURATOR_PAYLOAD,
+      errors: [MANUAL_REVIEW_REASONS.MISSING_CONFIGURATOR_PAYLOAD],
       configuratorPayload: null,
       masterPath: null,
     };

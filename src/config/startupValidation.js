@@ -248,6 +248,7 @@ export function getSafeStartupConfigSummary(config = env) {
       Number(config.SHOPIFY_UPDATE_TASK_MAX_ATTEMPTS) || 0,
     configuratorRequiredSkuPrefixCount:
       config.CONFIGURATOR_REQUIRED_SKU_PREFIXES?.length ?? 0,
+    accessorySkuCount: config.ACCESSORY_SKUS?.length ?? 0,
     configuratorMaxOutputWidthMm: config.CONFIGURATOR_MAX_OUTPUT_WIDTH_MM,
     configuratorMaxOutputHeightMm: config.CONFIGURATOR_MAX_OUTPUT_HEIGHT_MM,
     configuratorMaxOutputAreaM2: config.CONFIGURATOR_MAX_OUTPUT_AREA_M2,
