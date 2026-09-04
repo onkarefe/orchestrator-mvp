@@ -452,6 +452,7 @@ export async function releaseStaleProcessingJobs({
   maxAttempts,
   retryErrorMessage = 'stale_lock_released',
   finalErrorMessage = 'stale_processing_lock_max_attempts_exceeded',
+  db = pool,
 } = {}) {
   const parsedStaleLockMinutes = Number.parseInt(staleLockMinutes, 10);
   const parsedMaxAttempts = Number.parseInt(maxAttempts, 10);
@@ -464,7 +465,8 @@ export async function releaseStaleProcessingJobs({
       ? parsedMaxAttempts
       : 3;
 
-  const [requeuedResult] = await pool.execute(
+  const executor = getExecutor(db);
+  const [requeuedResult] = await executor.execute(
     `UPDATE jobs
     SET status = ?,
       last_error = ?,
@@ -483,7 +485,7 @@ export async function releaseStaleProcessingJobs({
     ]
   );
 
-  const [failedResult] = await pool.execute(
+  const [failedResult] = await executor.execute(
     `UPDATE jobs
     SET status = ?,
       last_error = ?,

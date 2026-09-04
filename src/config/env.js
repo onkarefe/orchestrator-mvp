@@ -221,6 +221,16 @@ const env = {
     30,
     { min: 1 }
   ),
+  WORKER_RECOVERY_INTERVAL_MS: integerFromEnv(
+    'WORKER_RECOVERY_INTERVAL_MS',
+    60000,
+    { min: 1000 }
+  ),
+  WORKER_RECOVERY_BATCH_SIZE: integerFromEnv(
+    'WORKER_RECOVERY_BATCH_SIZE',
+    25,
+    { min: 1 }
+  ),
   TMP_RETENTION_DAYS: integerFromEnv('TMP_RETENTION_DAYS', 7, { min: 0 }),
   ARTIFACT_RETENTION_DAYS: integerFromEnv('ARTIFACT_RETENTION_DAYS', 90, {
     min: 0,

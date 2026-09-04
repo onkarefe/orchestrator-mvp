@@ -112,6 +112,7 @@ export async function ensureOrderFactoryPackage({
         orderPackage: existingPackage,
         artifact,
         task: taskResult.task,
+        taskCreated: taskResult.created,
       };
     }
 
@@ -249,6 +250,7 @@ export async function ensureOrderFactoryPackage({
       orderPackage,
       artifact,
       task: taskResult.task,
+      taskCreated: taskResult.created,
     };
   } catch (error) {
     if (transactionStarted) {
