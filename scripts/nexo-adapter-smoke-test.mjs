@@ -13,7 +13,7 @@ import { REDACTED_VALUE, redact } from '../src/utils/redact.js';
 const basePayload = {
   timestamp: '2026-07-15 12:00:00',
   job_id: 123456,
-  reference: 'WANDINI-S7248237232408-J24',
+  reference: 'WANDINI-S7248237232408',
 };
 
 const expectedMappings = {
@@ -86,6 +86,14 @@ const missingReference = validateNexoCallbackPayload({
 assert.equal(missingReference.ok, false);
 assert.ok(missingReference.errors.includes('reference_required'));
 
+const legacyJobReference = validateNexoCallbackPayload({
+  ...basePayload,
+  reference: 'WANDINI-S7248237232408-J24',
+  status: 'accepted',
+});
+assert.equal(legacyJobReference.ok, false);
+assert.ok(legacyJobReference.errors.includes('reference_invalid_format'));
+
 const firstEventKey = getNexoDeliveryIdentity({
   headers: {},
   normalized: shipped.normalized,
@@ -108,19 +116,14 @@ assert.equal(firstEventKey, secondEventKey);
 assert.match(firstEventKey, /^nexo-event:[a-f0-9]{64}$/);
 
 const shippedTaskKey = buildNexoShopifyTaskIdempotencyKey({
-  jobId: 24,
+  orderFactoryPackageId: 24,
   reference: basePayload.reference,
   taskType: 'order_shipped',
-  trackingNumbers: shipped.normalized.trackingNumbers,
 });
 const sameTrackingTaskKey = buildNexoShopifyTaskIdempotencyKey({
-  jobId: 24,
+  orderFactoryPackageId: 24,
   reference: basePayload.reference,
   taskType: 'order_shipped',
-  trackingNumbers: [
-    { number: '1ZDEF987654321', url: 'https://changed.test/two' },
-    { number: '1ZABC123456789', url: 'https://changed.test/one' },
-  ],
 });
 
 assert.equal(shippedTaskKey, sameTrackingTaskKey);

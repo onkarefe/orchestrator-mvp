@@ -3,25 +3,27 @@ import crypto from 'node:crypto';
 import env from '../config/env.js';
 import {
   FACTORY_CALLBACK_PROCESSING_STATUSES,
-  JOB_STATUSES,
+  FACTORY_UPLOAD_TASK_STATUSES,
   ORDER_STATUSES,
   STATUS_GROUPS,
 } from '../constants/statuses.js';
 import pool from '../db/connection.js';
 import { isDuplicateKeyError } from '../db/errors.js';
+import { findArtifactById } from '../models/ArtifactModel.js';
 import {
   createFactoryCallback,
-  findLatestNexoCallbackByJobAndStatus,
+  findLatestNexoCallbackByPackageAndStatus,
   findOriginalFactoryCallbackByDeliveryId,
   updateFactoryCallbackProcessingStatus,
 } from '../models/FactoryCallbackModel.js';
+import { findFactoryUploadTaskByOrderPackageId } from '../models/FactoryUploadTaskModel.js';
 import {
-  findJobByFactoryReferenceForUpdate,
-  findJobByNexoJobIdForUpdate,
-  updateJobNexoState,
-} from '../models/JobModel.js';
+  findOrderFactoryPackageByNexoOrderIdForUpdate,
+  findOrderFactoryPackageByShopifyOrderIdForUpdate,
+  updateOrderFactoryPackageNexoState,
+} from '../models/OrderFactoryPackageModel.js';
 import {
-  findOrderByIdForUpdate,
+  findOrderByShopifyOrderIdForUpdate,
   updateOrderFactoryState,
 } from '../models/OrderModel.js';
 import { redact } from '../utils/redact.js';
@@ -54,6 +56,28 @@ const FACTORY_ORDER_STATUS_RANK = Object.freeze({
   [ORDER_STATUSES.READY_FOR_SHIPPING]: 4,
   [ORDER_STATUSES.SHIPPED]: 5,
 });
+
+const DEFAULT_RUNTIME = Object.freeze({
+  getConnection: () => pool.getConnection(),
+  createFactoryCallback,
+  findArtifactById,
+  findFactoryUploadTaskByOrderPackageId,
+  findLatestNexoCallbackByPackageAndStatus,
+  findOrderByShopifyOrderIdForUpdate,
+  findOrderFactoryPackageByNexoOrderIdForUpdate,
+  findOrderFactoryPackageByShopifyOrderIdForUpdate,
+  findOriginalFactoryCallbackByDeliveryId,
+  updateFactoryCallbackProcessingStatus,
+  updateOrderFactoryPackageNexoState,
+  updateOrderFactoryState,
+  ensureNexoShopifyUpdateTaskDryRun,
+  logInfo,
+  logWarning,
+});
+
+function callbackRuntime(overrides = {}) {
+  return { ...DEFAULT_RUNTIME, ...overrides };
+}
 
 function normalizeHeaders(headers) {
   const normalized = {};
@@ -143,12 +167,13 @@ function callbackRecordData({
   errorMessage = null,
   duplicateOfId = null,
   orderId = null,
-  jobId = null,
+  orderFactoryPackageId = null,
 }) {
   return {
     provider: NEXO_PROVIDER,
     orderId,
-    jobId,
+    jobId: null,
+    orderFactoryPackageId,
     factoryReference: normalized?.reference ?? null,
     shopifyOrderId: normalized?.referenceParts?.shopifyOrderId ?? null,
     factoryOrderId: normalized?.nexoJobId ?? null,
@@ -173,10 +198,12 @@ async function recordRejectedNexoCallback({
   processingStatus,
   errorMessage,
   orderId = null,
-  jobId = null,
+  orderFactoryPackageId = null,
   duplicateOfId = null,
+  runtime: runtimeOverrides = {},
 }) {
-  const callback = await createFactoryCallback(
+  const runtime = callbackRuntime(runtimeOverrides);
+  const callback = await runtime.createFactoryCallback(
     callbackRecordData({
       payload,
       headers,
@@ -186,23 +213,24 @@ async function recordRejectedNexoCallback({
       processingStatus,
       errorMessage,
       orderId,
-      jobId,
+      orderFactoryPackageId,
       duplicateOfId,
     })
   );
 
-  await logWarning({
+  await runtime.logWarning({
     scopeType: orderId ? 'order' : 'system',
     orderId,
-    jobId,
+    jobId: null,
     step: 'nexo_callback.rejected',
     message: 'NEXO callback rejected or held for manual review',
     detailsJson: {
       callbackId: callback.id,
+      orderFactoryPackageId,
       processingStatus,
       errorMessage,
       reference: callback.factory_reference,
-      nexoJobId: callback.factory_order_id,
+      nexoExternalId: callback.factory_order_id,
     },
   });
 
@@ -237,6 +265,7 @@ async function resolveTransportDuplicate({
   normalized,
   deliveryIdentity,
   authValid,
+  runtime,
 }) {
   if (!hasSameNexoEventSemantics(originalCallback, normalized)) {
     const callback = await recordRejectedNexoCallback({
@@ -249,7 +278,9 @@ async function resolveTransportDuplicate({
       errorMessage: 'nexo_delivery_id_payload_mismatch',
       duplicateOfId: originalCallback.id,
       orderId: originalCallback.order_id ?? null,
-      jobId: originalCallback.job_id ?? null,
+      orderFactoryPackageId:
+        originalCallback.order_factory_package_id ?? null,
+      runtime,
     });
 
     return {
@@ -261,13 +292,32 @@ async function resolveTransportDuplicate({
         duplicateOfId: originalCallback.id,
         processingStatus: callback.processing_status,
         orderId: originalCallback.order_id ?? null,
-        jobId: originalCallback.job_id ?? null,
+        orderFactoryPackageId:
+          originalCallback.order_factory_package_id ?? null,
         orderUpdated: false,
         shopifyUpdateTaskCreated: false,
         error: 'nexo_delivery_id_payload_mismatch',
       },
     };
   }
+
+  await runtime.logInfo({
+    scopeType: originalCallback.order_id ? 'order' : 'system',
+    orderId: originalCallback.order_id ?? null,
+    jobId: null,
+    step: 'nexo_callback.duplicate',
+    message: 'Duplicate NEXO callback delivery safely ignored',
+    detailsJson: {
+      callbackId: originalCallback.id,
+      orderFactoryPackageId:
+        originalCallback.order_factory_package_id ?? null,
+      shopifyOrderId: originalCallback.shopify_order_id ?? null,
+      reference: originalCallback.factory_reference ?? null,
+      nexoExternalId: originalCallback.factory_order_id ?? null,
+      nexoStatus: originalCallback.status ?? null,
+      duplicateReason: 'same_delivery',
+    },
+  });
 
   return {
     httpStatus: 200,
@@ -277,41 +327,55 @@ async function resolveTransportDuplicate({
       callbackId: originalCallback.id,
       duplicateOfId: originalCallback.id,
       processingStatus: FACTORY_CALLBACK_PROCESSING_STATUSES.DUPLICATE,
+      orderId: originalCallback.order_id ?? null,
+      orderFactoryPackageId:
+        originalCallback.order_factory_package_id ?? null,
       orderUpdated: false,
       shopifyUpdateTaskCreated: false,
     },
   };
 }
 
-function getJobOrderRelationshipIssue(job, order, normalized) {
-  if (!job.order_id) {
-    return 'job_order_relationship_missing';
-  }
-
-  if (!order || String(order.id) !== String(job.order_id)) {
-    return 'job_order_relationship_invalid';
-  }
-
-  if (!job.factory_reference || job.factory_reference !== normalized.reference) {
-    return 'factory_reference_mismatch';
-  }
-
-  if (String(job.id) !== normalized.referenceParts.internalJobId) {
-    return 'factory_reference_job_id_mismatch';
+function getPackageRelationshipIssue({
+  order,
+  orderPackage,
+  artifact,
+  uploadTask,
+  normalized,
+}) {
+  if (
+    !orderPackage ||
+    String(orderPackage.order_id) !== String(order.id) ||
+    String(orderPackage.shopify_order_id) !== String(order.shopify_order_id) ||
+    orderPackage.order_number !== normalized.reference
+  ) {
+    return 'order_factory_package_identity_mismatch';
   }
 
   if (
-    !job.shopify_order_id ||
-    !order.shopify_order_id ||
-    String(job.shopify_order_id) !== String(order.shopify_order_id)
+    orderPackage.status !== 'ready' ||
+    !artifact ||
+    String(artifact.id) !== String(orderPackage.artifact_id) ||
+    String(artifact.order_id) !== String(order.id) ||
+    artifact.job_id !== null ||
+    artifact.type !== 'factory_package' ||
+    artifact.status !== 'available' ||
+    artifact.validation_status !== 'passed'
   ) {
-    return 'job_order_shopify_id_mismatch';
+    return 'order_factory_package_not_valid';
   }
 
   if (
-    String(order.shopify_order_id) !== normalized.referenceParts.shopifyOrderId
+    !uploadTask ||
+    uploadTask.status !== FACTORY_UPLOAD_TASK_STATUSES.UPLOADED ||
+    String(uploadTask.order_factory_package_id) !== String(orderPackage.id) ||
+    String(uploadTask.order_id) !== String(order.id) ||
+    String(uploadTask.artifact_id) !== String(orderPackage.artifact_id) ||
+    String(uploadTask.shopify_order_id) !== String(order.shopify_order_id) ||
+    uploadTask.factory_reference !== orderPackage.order_number ||
+    uploadTask.job_id !== null
   ) {
-    return 'factory_reference_shopify_order_id_mismatch';
+    return 'order_factory_package_not_dispatched';
   }
 
   return null;
@@ -327,21 +391,7 @@ function getOrderUpdateDecision(order, targetOrderStatus) {
 
   if (canTransition(STATUS_GROUPS.ORDER, order.status, targetOrderStatus)) {
     return {
-      update: true,
-      error: null,
-    };
-  }
-
-  const currentRank = FACTORY_ORDER_STATUS_RANK[order.status];
-  const targetRank = FACTORY_ORDER_STATUS_RANK[targetOrderStatus];
-
-  if (
-    currentRank !== undefined &&
-    targetRank !== undefined &&
-    currentRank > targetRank
-  ) {
-    return {
-      update: false,
+      update: order.status !== targetOrderStatus,
       error: null,
     };
   }
@@ -356,18 +406,25 @@ function requiresShopifyTask(status) {
   return status === 'printed' || status === 'shipped';
 }
 
-async function logManualReview(callback, errorMessage, orderId, jobId) {
-  await logWarning({
+async function logManualReview(
+  callback,
+  errorMessage,
+  orderId,
+  orderFactoryPackageId,
+  runtime
+) {
+  await runtime.logWarning({
     scopeType: orderId ? 'order' : 'system',
     orderId,
-    jobId,
+    jobId: null,
     step: 'nexo_callback.manual_review',
     message: 'NEXO callback requires manual review',
     detailsJson: {
       callbackId: callback.id,
+      orderFactoryPackageId,
       errorMessage,
       reference: callback.factory_reference,
-      nexoJobId: callback.factory_order_id,
+      nexoExternalId: callback.factory_order_id,
       nexoStatus: callback.status,
     },
   });
@@ -377,8 +434,11 @@ export async function recordNexoTransportFailure({
   rawBody,
   headers,
   errorCode,
+  config = env,
+  runtime: runtimeOverrides = {},
 }) {
-  const auth = authenticateNexoCallback(headers);
+  const runtime = callbackRuntime(runtimeOverrides);
+  const auth = authenticateNexoCallback(headers, config);
   const rawBuffer = Buffer.isBuffer(rawBody) ? rawBody : Buffer.alloc(0);
   const payloadAudit = {
     rawPayloadUnavailable: true,
@@ -397,6 +457,7 @@ export async function recordNexoTransportFailure({
     authValid: auth.authValid,
     processingStatus,
     errorMessage: auth.error ?? errorCode,
+    runtime,
   });
 
   return {
@@ -405,8 +466,14 @@ export async function recordNexoTransportFailure({
   };
 }
 
-export async function receiveNexoCallback({ payload, headers }) {
-  const auth = authenticateNexoCallback(headers);
+export async function receiveNexoCallback({
+  payload,
+  headers,
+  config = env,
+  runtime: runtimeOverrides = {},
+}) {
+  const runtime = callbackRuntime(runtimeOverrides);
+  const auth = authenticateNexoCallback(headers, config);
   const validation = validateNexoCallbackPayload(payload);
   const normalized = validation.normalized;
   const deliveryIdentity = getNexoDeliveryIdentity({ headers, normalized });
@@ -420,6 +487,7 @@ export async function receiveNexoCallback({ payload, headers }) {
       authValid: false,
       processingStatus: FACTORY_CALLBACK_PROCESSING_STATUSES.FAILED,
       errorMessage: auth.error,
+      runtime,
     });
 
     return {
@@ -435,7 +503,7 @@ export async function receiveNexoCallback({ payload, headers }) {
   }
 
   if (!auth.authChecked) {
-    await logWarning({
+    await runtime.logWarning({
       scopeType: 'system',
       step: 'nexo_callback.auth_not_enforced',
       message: 'NEXO callback authentication is disabled',
@@ -451,6 +519,7 @@ export async function receiveNexoCallback({ payload, headers }) {
       authValid: auth.authValid,
       processingStatus: FACTORY_CALLBACK_PROCESSING_STATUSES.MANUAL_REVIEW,
       errorMessage: validation.errors.join(', '),
+      runtime,
     });
 
     return {
@@ -465,10 +534,10 @@ export async function receiveNexoCallback({ payload, headers }) {
     };
   }
 
-  const connection = await pool.getConnection();
+  const connection = await runtime.getConnection();
   let transactionStarted = false;
   let matchedOrderId = null;
-  let matchedJobId = null;
+  let matchedOrderFactoryPackageId = null;
   let connectionReleased = false;
   const releaseConnection = () => {
     if (!connectionReleased) {
@@ -481,7 +550,7 @@ export async function receiveNexoCallback({ payload, headers }) {
     await connection.beginTransaction();
     transactionStarted = true;
 
-    const originalDelivery = await findOriginalFactoryCallbackByDeliveryId(
+    const originalDelivery = await runtime.findOriginalFactoryCallbackByDeliveryId(
       deliveryIdentity.deliveryId,
       connection,
       NEXO_PROVIDER
@@ -498,10 +567,11 @@ export async function receiveNexoCallback({ payload, headers }) {
         normalized,
         deliveryIdentity,
         authValid: auth.authValid,
+        runtime,
       });
     }
 
-    const callback = await createFactoryCallback(
+    const callback = await runtime.createFactoryCallback(
       callbackRecordData({
         payload,
         headers,
@@ -512,23 +582,20 @@ export async function receiveNexoCallback({ payload, headers }) {
       }),
       connection
     );
-    const job = await findJobByFactoryReferenceForUpdate(
-      normalized.reference,
-      connection
-    );
 
     const finishManualReview = async ({
       errorMessage,
       orderId = null,
-      jobId = null,
+      orderFactoryPackageId = null,
     }) => {
-      const updatedCallback = await updateFactoryCallbackProcessingStatus(
+      const updatedCallback = await runtime.updateFactoryCallbackProcessingStatus(
         callback.id,
         {
           processingStatus: FACTORY_CALLBACK_PROCESSING_STATUSES.MANUAL_REVIEW,
           errorMessage,
           orderId,
-          jobId,
+          jobId: null,
+          orderFactoryPackageId,
         },
         connection
       );
@@ -536,7 +603,13 @@ export async function receiveNexoCallback({ payload, headers }) {
       await connection.commit();
       transactionStarted = false;
       releaseConnection();
-      await logManualReview(updatedCallback, errorMessage, orderId, jobId);
+      await logManualReview(
+        updatedCallback,
+        errorMessage,
+        orderId,
+        orderFactoryPackageId,
+        runtime
+      );
 
       return {
         httpStatus: 202,
@@ -545,7 +618,7 @@ export async function receiveNexoCallback({ payload, headers }) {
           callbackId: updatedCallback.id,
           processingStatus: updatedCallback.processing_status,
           orderId,
-          jobId,
+          orderFactoryPackageId,
           orderUpdated: false,
           shopifyUpdateTaskCreated: false,
           error: errorMessage,
@@ -553,77 +626,131 @@ export async function receiveNexoCallback({ payload, headers }) {
       };
     };
 
-    if (!job) {
+    const order = await runtime.findOrderByShopifyOrderIdForUpdate(
+      normalized.referenceParts.shopifyOrderId,
+      connection
+    );
+
+    if (!order) {
       return await finishManualReview({
-        errorMessage: 'nexo_factory_reference_not_found',
+        errorMessage: 'nexo_callback_order_not_found',
       });
     }
 
-    matchedJobId = job.id;
+    matchedOrderId = order.id;
 
-    const order = job.order_id
-      ? await findOrderByIdForUpdate(job.order_id, connection)
-      : null;
-    matchedOrderId = order?.id ?? null;
-    const relationshipIssue = getJobOrderRelationshipIssue(
-      job,
-      order,
-      normalized
+    if (
+      String(order.shopify_order_id) !==
+      normalized.referenceParts.shopifyOrderId
+    ) {
+      return await finishManualReview({
+        errorMessage: 'nexo_callback_shopify_order_id_mismatch',
+        orderId: order.id,
+      });
+    }
+
+    const matchingPackages =
+      await runtime.findOrderFactoryPackageByShopifyOrderIdForUpdate(
+        normalized.referenceParts.shopifyOrderId,
+        connection
+      );
+
+    if (matchingPackages.length !== 1) {
+      return await finishManualReview({
+        errorMessage:
+          matchingPackages.length === 0
+            ? 'nexo_order_factory_package_not_found'
+            : 'nexo_multiple_order_factory_packages',
+        orderId: order.id,
+      });
+    }
+
+    const orderPackage = matchingPackages[0];
+    matchedOrderFactoryPackageId = orderPackage.id;
+    const artifact = await runtime.findArtifactById(
+      orderPackage.artifact_id,
+      connection
     );
+    const uploadTask = await runtime.findFactoryUploadTaskByOrderPackageId(
+      orderPackage.id,
+      connection
+    );
+    const relationshipIssue = getPackageRelationshipIssue({
+      order,
+      orderPackage,
+      artifact,
+      uploadTask,
+      normalized,
+    });
 
     if (relationshipIssue) {
       return await finishManualReview({
         errorMessage: relationshipIssue,
-        orderId: order?.id ?? null,
-        jobId: job.id,
-      });
-    }
-
-    if (job.status !== JOB_STATUSES.COMPLETED) {
-      return await finishManualReview({
-        errorMessage: 'job_not_ready_for_nexo_callback',
         orderId: order.id,
-        jobId: job.id,
+        orderFactoryPackageId: orderPackage.id,
       });
     }
 
     if (
-      job.nexo_job_id &&
-      String(job.nexo_job_id) !== normalized.nexoJobId
+      orderPackage.nexo_order_id &&
+      String(orderPackage.nexo_order_id) !== normalized.nexoJobId
     ) {
       return await finishManualReview({
-        errorMessage: 'nexo_job_id_mismatch',
+        errorMessage: 'nexo_external_id_mismatch',
         orderId: order.id,
-        jobId: job.id,
+        orderFactoryPackageId: orderPackage.id,
       });
     }
 
-    if (job.nexo_status && !job.nexo_job_id) {
+    if (orderPackage.factory_status && !orderPackage.nexo_order_id) {
       return await finishManualReview({
-        errorMessage: 'nexo_status_without_bound_job_id',
+        errorMessage: 'nexo_status_without_bound_external_id',
         orderId: order.id,
-        jobId: job.id,
+        orderFactoryPackageId: orderPackage.id,
       });
     }
-
-    const jobAlreadyBoundToNexoId = await findJobByNexoJobIdForUpdate(
-      normalized.nexoJobId,
-      connection
-    );
 
     if (
-      jobAlreadyBoundToNexoId &&
-      String(jobAlreadyBoundToNexoId.id) !== String(job.id)
+      order.factory_order_id &&
+      String(order.factory_order_id) !== normalized.nexoJobId
     ) {
       return await finishManualReview({
-        errorMessage: 'nexo_job_id_already_bound_to_another_job',
+        errorMessage: 'order_nexo_external_id_mismatch',
         orderId: order.id,
-        jobId: job.id,
+        orderFactoryPackageId: orderPackage.id,
+      });
+    }
+
+    if (
+      (order.factory_status ?? null) !==
+      (orderPackage.factory_status ?? null)
+    ) {
+      return await finishManualReview({
+        errorMessage: 'order_package_factory_status_mismatch',
+        orderId: order.id,
+        orderFactoryPackageId: orderPackage.id,
+      });
+    }
+
+    const packageAlreadyBoundToNexoId =
+      await runtime.findOrderFactoryPackageByNexoOrderIdForUpdate(
+        normalized.nexoJobId,
+        connection
+      );
+
+    if (
+      packageAlreadyBoundToNexoId &&
+      String(packageAlreadyBoundToNexoId.id) !== String(orderPackage.id)
+    ) {
+      return await finishManualReview({
+        errorMessage: 'nexo_external_id_already_bound_to_another_package',
+        orderId: order.id,
+        orderFactoryPackageId: orderPackage.id,
       });
     }
 
     const sequenceIssue = getNexoStatusSequenceIssue(
-      job.nexo_status,
+      orderPackage.factory_status,
       normalized.status
     );
 
@@ -631,16 +758,17 @@ export async function receiveNexoCallback({ payload, headers }) {
       return await finishManualReview({
         errorMessage: sequenceIssue,
         orderId: order.id,
-        jobId: job.id,
+        orderFactoryPackageId: orderPackage.id,
       });
     }
 
-    const sameSemanticStatus = job.nexo_status === normalized.status;
+    const sameSemanticStatus =
+      orderPackage.factory_status === normalized.status;
     const priorSemanticCallback = sameSemanticStatus
-      ? await findLatestNexoCallbackByJobAndStatus(
+      ? await runtime.findLatestNexoCallbackByPackageAndStatus(
           {
-            jobId: job.id,
-            nexoJobId: normalized.nexoJobId,
+            orderFactoryPackageId: orderPackage.id,
+            nexoOrderId: normalized.nexoJobId,
             status: normalized.status,
           },
           connection
@@ -648,19 +776,41 @@ export async function receiveNexoCallback({ payload, headers }) {
       : null;
 
     if (sameSemanticStatus && !requiresShopifyTask(normalized.status)) {
-      const updatedCallback = await updateFactoryCallbackProcessingStatus(
-        callback.id,
-        {
-          processingStatus: FACTORY_CALLBACK_PROCESSING_STATUSES.DUPLICATE,
-          orderId: order.id,
-          jobId: job.id,
-          duplicateOfId: priorSemanticCallback?.id ?? null,
-        },
-        connection
-      );
+      const updatedCallback =
+        await runtime.updateFactoryCallbackProcessingStatus(
+          callback.id,
+          {
+            processingStatus: FACTORY_CALLBACK_PROCESSING_STATUSES.DUPLICATE,
+            orderId: order.id,
+            jobId: null,
+            orderFactoryPackageId: orderPackage.id,
+            duplicateOfId: priorSemanticCallback?.id ?? null,
+          },
+          connection
+        );
 
       await connection.commit();
       transactionStarted = false;
+      releaseConnection();
+
+      await runtime.logInfo({
+        scopeType: 'order',
+        orderId: order.id,
+        jobId: null,
+        step: 'nexo_callback.duplicate',
+        message: 'Duplicate NEXO callback status safely ignored',
+        detailsJson: {
+          callbackId: updatedCallback.id,
+          duplicateOfId: priorSemanticCallback?.id ?? null,
+          orderFactoryPackageId: orderPackage.id,
+          shopifyOrderId: order.shopify_order_id,
+          reference: normalized.reference,
+          nexoExternalId: normalized.nexoJobId,
+          previousNexoStatus: orderPackage.factory_status,
+          nexoStatus: normalized.status,
+          duplicateReason: 'same_status',
+        },
+      });
 
       return {
         httpStatus: 200,
@@ -671,7 +821,7 @@ export async function receiveNexoCallback({ payload, headers }) {
           duplicateOfId: priorSemanticCallback?.id ?? null,
           processingStatus: updatedCallback.processing_status,
           orderId: order.id,
-          jobId: job.id,
+          orderFactoryPackageId: orderPackage.id,
           orderUpdated: false,
           shopifyUpdateTaskCreated: false,
         },
@@ -687,39 +837,49 @@ export async function receiveNexoCallback({ payload, headers }) {
       return await finishManualReview({
         errorMessage: orderDecision.error,
         orderId: order.id,
-        jobId: job.id,
+        orderFactoryPackageId: orderPackage.id,
       });
     }
 
-    const updatedJob = sameSemanticStatus
-      ? job
-      : await updateJobNexoState(
-          job.id,
+    const updatedPackage = sameSemanticStatus
+      ? orderPackage
+      : await runtime.updateOrderFactoryPackageNexoState(
+          orderPackage.id,
           {
-            nexoJobId: normalized.nexoJobId,
-            nexoStatus: normalized.status,
+            nexoOrderId: normalized.nexoJobId,
+            factoryStatus: normalized.status,
           },
           connection
         );
+
+    if (!updatedPackage) {
+      return await finishManualReview({
+        errorMessage: 'nexo_external_id_conditional_binding_failed',
+        orderId: order.id,
+        orderFactoryPackageId: orderPackage.id,
+      });
+    }
+
     const isFactoryException =
       normalized.status === 'cancelled' || normalized.status === 'error';
-    const updatedOrder = orderDecision.update
-      ? await updateOrderFactoryState(
+    const updatedOrder = sameSemanticStatus
+      ? order
+      : await runtime.updateOrderFactoryState(
           order.id,
           {
+            factoryOrderId: normalized.nexoJobId,
             factoryStatus: normalized.status,
-            status: targetOrderStatus,
+            status: orderDecision.update ? targetOrderStatus : undefined,
             manualReviewReason: isFactoryException
               ? `nexo_callback_${normalized.status}`
               : undefined,
           },
           connection
-        )
-      : order;
+        );
     const successfulProcessingStatus = isFactoryException
       ? FACTORY_CALLBACK_PROCESSING_STATUSES.MANUAL_REVIEW
       : FACTORY_CALLBACK_PROCESSING_STATUSES.PROCESSED;
-    let updatedCallback = await updateFactoryCallbackProcessingStatus(
+    let updatedCallback = await runtime.updateFactoryCallbackProcessingStatus(
       callback.id,
       {
         processingStatus: successfulProcessingStatus,
@@ -727,17 +887,19 @@ export async function receiveNexoCallback({ payload, headers }) {
           ? `nexo_status_${normalized.status}_requires_manual_review`
           : null,
         orderId: order.id,
-        jobId: job.id,
+        jobId: null,
+        orderFactoryPackageId: orderPackage.id,
       },
       connection
     );
-    const shopifyUpdateTaskResult = await ensureNexoShopifyUpdateTaskDryRun({
-      order: updatedOrder,
-      job: updatedJob,
-      factoryCallback: updatedCallback,
-      nexoCallback: normalized,
-      db: connection,
-    });
+    const shopifyUpdateTaskResult =
+      await runtime.ensureNexoShopifyUpdateTaskDryRun({
+        order: updatedOrder,
+        orderPackage: updatedPackage,
+        factoryCallback: updatedCallback,
+        nexoCallback: normalized,
+        db: connection,
+      });
 
     if (requiresShopifyTask(normalized.status) && !shopifyUpdateTaskResult.task) {
       throw new Error('Required NEXO Shopify dry-run task was not created or found');
@@ -750,12 +912,13 @@ export async function receiveNexoCallback({ payload, headers }) {
     );
 
     if (semanticDuplicate) {
-      updatedCallback = await updateFactoryCallbackProcessingStatus(
+      updatedCallback = await runtime.updateFactoryCallbackProcessingStatus(
         callback.id,
         {
           processingStatus: FACTORY_CALLBACK_PROCESSING_STATUSES.DUPLICATE,
           orderId: order.id,
-          jobId: job.id,
+          jobId: null,
+          orderFactoryPackageId: orderPackage.id,
           duplicateOfId: priorSemanticCallback?.id ?? null,
         },
         connection
@@ -766,10 +929,10 @@ export async function receiveNexoCallback({ payload, headers }) {
     transactionStarted = false;
     releaseConnection();
 
-    await logInfo({
+    await runtime.logInfo({
       scopeType: 'order',
       orderId: order.id,
-      jobId: job.id,
+      jobId: null,
       step: semanticDuplicate
         ? 'nexo_callback.duplicate'
         : 'nexo_callback.processed',
@@ -778,10 +941,12 @@ export async function receiveNexoCallback({ payload, headers }) {
         : 'NEXO callback processed',
       detailsJson: {
         callbackId: updatedCallback.id,
+        orderFactoryPackageId: orderPackage.id,
+        shopifyOrderId: order.shopify_order_id,
         reference: normalized.reference,
-        nexoJobId: normalized.nexoJobId,
+        nexoExternalId: normalized.nexoJobId,
+        previousNexoStatus: orderPackage.factory_status ?? null,
         nexoStatus: normalized.status,
-        previousNexoStatus: job.nexo_status ?? null,
         previousOrderStatus: order.status,
         orderStatus: updatedOrder.status,
         orderUpdated: orderDecision.update,
@@ -802,9 +967,9 @@ export async function receiveNexoCallback({ payload, headers }) {
           : null,
         processingStatus: updatedCallback.processing_status,
         orderId: order.id,
-        jobId: job.id,
+        orderFactoryPackageId: orderPackage.id,
         reference: normalized.reference,
-        nexoJobId: normalized.nexoJobId,
+        nexoExternalId: normalized.nexoJobId,
         nexoStatus: normalized.status,
         orderUpdated: orderDecision.update,
         orderStatus: updatedOrder.status,
@@ -823,11 +988,12 @@ export async function receiveNexoCallback({ payload, headers }) {
     releaseConnection();
 
     if (isDuplicateKeyError(error)) {
-      const originalDelivery = await findOriginalFactoryCallbackByDeliveryId(
-        deliveryIdentity.deliveryId,
-        undefined,
-        NEXO_PROVIDER
-      );
+      const originalDelivery =
+        await runtime.findOriginalFactoryCallbackByDeliveryId(
+          deliveryIdentity.deliveryId,
+          undefined,
+          NEXO_PROVIDER
+        );
 
       if (originalDelivery) {
         return await resolveTransportDuplicate({
@@ -837,20 +1003,27 @@ export async function receiveNexoCallback({ payload, headers }) {
           normalized,
           deliveryIdentity,
           authValid: auth.authValid,
+          runtime,
         });
       }
 
-      if (String(error.message ?? '').includes('uq_jobs_nexo_job_id')) {
+      if (
+        String(error.message ?? '').includes(
+          'uq_order_factory_packages_nexo_order_id'
+        )
+      ) {
         const callback = await recordRejectedNexoCallback({
           payload,
           headers,
           normalized,
           deliveryIdentity,
           authValid: auth.authValid,
-          processingStatus: FACTORY_CALLBACK_PROCESSING_STATUSES.MANUAL_REVIEW,
-          errorMessage: 'nexo_job_id_already_bound_to_another_job',
+          processingStatus:
+            FACTORY_CALLBACK_PROCESSING_STATUSES.MANUAL_REVIEW,
+          errorMessage: 'nexo_external_id_already_bound_to_another_package',
           orderId: matchedOrderId,
-          jobId: matchedJobId,
+          orderFactoryPackageId: matchedOrderFactoryPackageId,
+          runtime,
         });
 
         return {
@@ -860,10 +1033,10 @@ export async function receiveNexoCallback({ payload, headers }) {
             callbackId: callback.id,
             processingStatus: callback.processing_status,
             orderId: matchedOrderId,
-            jobId: matchedJobId,
+            orderFactoryPackageId: matchedOrderFactoryPackageId,
             orderUpdated: false,
             shopifyUpdateTaskCreated: false,
-            error: 'nexo_job_id_already_bound_to_another_job',
+            error: 'nexo_external_id_already_bound_to_another_package',
           },
         };
       }
@@ -879,7 +1052,8 @@ export async function receiveNexoCallback({ payload, headers }) {
         processingStatus: FACTORY_CALLBACK_PROCESSING_STATUSES.MANUAL_REVIEW,
         errorMessage: 'nexo_shopify_task_idempotency_conflict',
         orderId: matchedOrderId,
-        jobId: matchedJobId,
+        orderFactoryPackageId: matchedOrderFactoryPackageId,
+        runtime,
       });
 
       return {
@@ -889,7 +1063,7 @@ export async function receiveNexoCallback({ payload, headers }) {
           callbackId: callback.id,
           processingStatus: callback.processing_status,
           orderId: matchedOrderId,
-          jobId: matchedJobId,
+          orderFactoryPackageId: matchedOrderFactoryPackageId,
           orderUpdated: false,
           shopifyUpdateTaskCreated: false,
           error: 'nexo_shopify_task_idempotency_conflict',

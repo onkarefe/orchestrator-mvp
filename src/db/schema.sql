@@ -188,6 +188,8 @@ CREATE TABLE IF NOT EXISTS order_factory_packages (
   artifact_id BIGINT UNSIGNED NOT NULL,
   order_number VARCHAR(191) NOT NULL,
   status VARCHAR(32) NOT NULL DEFAULT 'ready',
+  nexo_order_id VARCHAR(191) NULL,
+  factory_status VARCHAR(100) NULL,
   package_dir VARCHAR(500) NOT NULL,
   manifest_path VARCHAR(500) NOT NULL,
   xml_file_name VARCHAR(255) NOT NULL,
@@ -199,7 +201,9 @@ CREATE TABLE IF NOT EXISTS order_factory_packages (
   UNIQUE KEY uq_order_factory_packages_order_id (order_id),
   UNIQUE KEY uq_order_factory_packages_shopify_order_id (shopify_order_id),
   UNIQUE KEY uq_order_factory_packages_artifact_id (artifact_id),
+  UNIQUE KEY uq_order_factory_packages_nexo_order_id (nexo_order_id),
   KEY idx_order_factory_packages_status (status),
+  KEY idx_order_factory_packages_factory_status (factory_status),
   CONSTRAINT fk_order_factory_packages_order_id
     FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE RESTRICT,
   CONSTRAINT fk_order_factory_packages_artifact_id
@@ -211,6 +215,7 @@ CREATE TABLE IF NOT EXISTS factory_callbacks (
   provider VARCHAR(100) NOT NULL DEFAULT 'factory_simulation',
   order_id BIGINT UNSIGNED NULL,
   job_id BIGINT UNSIGNED NULL,
+  order_factory_package_id BIGINT UNSIGNED NULL,
   factory_reference VARCHAR(191) NULL,
   shopify_order_id VARCHAR(191) NULL,
   order_number VARCHAR(191) NULL,
@@ -240,6 +245,7 @@ CREATE TABLE IF NOT EXISTS factory_callbacks (
   PRIMARY KEY (id),
   KEY idx_factory_callbacks_order_id (order_id),
   KEY idx_factory_callbacks_job_id (job_id),
+  KEY idx_factory_callbacks_order_package (order_factory_package_id),
   KEY idx_factory_callbacks_factory_reference (factory_reference),
   KEY idx_factory_callbacks_shopify_order_id (shopify_order_id),
   KEY idx_factory_callbacks_factory_order_id (factory_order_id),
@@ -250,6 +256,7 @@ CREATE TABLE IF NOT EXISTS factory_callbacks (
   KEY idx_factory_callbacks_duplicate_of_id (duplicate_of_id),
   CONSTRAINT fk_factory_callbacks_order_id FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE SET NULL,
   CONSTRAINT fk_factory_callbacks_job_id FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE SET NULL,
+  CONSTRAINT fk_factory_callbacks_order_package FOREIGN KEY (order_factory_package_id) REFERENCES order_factory_packages (id) ON DELETE SET NULL,
   CONSTRAINT fk_factory_callbacks_duplicate_of_id FOREIGN KEY (duplicate_of_id) REFERENCES factory_callbacks (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

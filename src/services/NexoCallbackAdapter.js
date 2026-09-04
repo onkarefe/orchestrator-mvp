@@ -233,7 +233,7 @@ export function parseNexoFactoryReference(reference) {
     return null;
   }
 
-  const match = reference.match(/^WANDINI-S([1-9][0-9]*)-J([1-9][0-9]*)$/);
+  const match = reference.match(/^WANDINI-S([1-9][0-9]*)$/);
 
   if (!match) {
     return null;
@@ -241,7 +241,6 @@ export function parseNexoFactoryReference(reference) {
 
   return {
     shopifyOrderId: match[1],
-    internalJobId: match[2],
   };
 }
 
@@ -425,22 +424,25 @@ export function getNexoDeliveryIdentity({ headers, normalized }) {
 }
 
 export function buildNexoShopifyTaskIdempotencyKey({
-  jobId,
+  orderFactoryPackageId,
   reference,
   taskType,
-  trackingNumbers = [],
 }) {
-  const baseIdentity = `${String(jobId)}\0${String(reference)}`;
+  const packageId = String(orderFactoryPackageId ?? '').trim();
+  const factoryReference = String(reference ?? '').trim();
+
+  if (!packageId || !factoryReference) {
+    return null;
+  }
+
+  const baseIdentity = `${packageId}\0${factoryReference}`;
 
   if (taskType === 'order_produced') {
     return `nexo:produced:${sha256(baseIdentity)}`;
   }
 
   if (taskType === 'order_shipped') {
-    const trackingSet = [...new Set(trackingNumbers.map(({ number }) => number))]
-      .sort(compareCanonicalString);
-
-    return `nexo:shipped:${sha256(`${baseIdentity}\0${JSON.stringify(trackingSet)}`)}`;
+    return `nexo:shipped:${sha256(baseIdentity)}`;
   }
 
   return null;

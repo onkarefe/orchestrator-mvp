@@ -263,7 +263,7 @@ export async function ensureShopifyUpdateTaskDryRun({
 
 export function buildNexoShopifyUpdateTaskDraft({
   order,
-  job,
+  orderPackage,
   factoryCallback,
   nexoCallback,
   shopifyWriteEnabled = env.SHOPIFY_WRITE_ENABLED,
@@ -275,15 +275,14 @@ export function buildNexoShopifyUpdateTaskDraft({
         ? SHOPIFY_UPDATE_TASK_TYPES.ORDER_SHIPPED
         : null;
 
-  if (!taskType || !order || !job || !factoryCallback?.id) {
+  if (!taskType || !order || !orderPackage || !factoryCallback?.id) {
     return null;
   }
 
   const idempotencyKey = buildNexoShopifyTaskIdempotencyKey({
-    jobId: job.id,
+    orderFactoryPackageId: orderPackage.id,
     reference: nexoCallback.reference,
     taskType,
-    trackingNumbers: nexoCallback.trackingNumbers,
   });
   const payload = {
     source: 'nexo_callback',
@@ -293,10 +292,10 @@ export function buildNexoShopifyUpdateTaskDraft({
     factoryCallbackStatus: factoryCallback.processing_status ?? null,
     nexoStatus: nexoCallback.status,
     reference: nexoCallback.reference,
-    factoryReference: job.factory_reference,
-    nexoJobId: nexoCallback.nexoJobId,
+    factoryReference: orderPackage.order_number,
+    nexoExternalId: nexoCallback.nexoJobId,
     timestamp: nexoCallback.timestamp,
-    jobId: job.id,
+    orderFactoryPackageId: orderPackage.id,
     orderId: order.id,
     shopifyOrderId: order.shopify_order_id ?? null,
     orderStatus: order.status,
@@ -373,10 +372,12 @@ function assertCompatibleNexoTask(existingTask, draft) {
       payload.source === 'nexo_callback' &&
       payload.dryRun === true &&
       payload.writeSuppressed === true &&
-      String(payload.jobId) === String(expectedPayload.jobId) &&
+      String(payload.orderFactoryPackageId) ===
+        String(expectedPayload.orderFactoryPackageId) &&
       payload.reference === expectedPayload.reference &&
       payload.factoryReference === expectedPayload.factoryReference &&
-      String(payload.nexoJobId) === String(expectedPayload.nexoJobId) &&
+      String(payload.nexoExternalId) ===
+        String(expectedPayload.nexoExternalId) &&
       (draft.taskType !== SHOPIFY_UPDATE_TASK_TYPES.ORDER_SHIPPED ||
         (payload.parcel_service === expectedPayload.parcel_service &&
           JSON.stringify(canonicalTrackingNumbers(payload.trackingNumbers)) ===
@@ -398,14 +399,20 @@ function assertCompatibleNexoTask(existingTask, draft) {
 
 export async function ensureNexoShopifyUpdateTaskDryRun({
   order,
-  job,
+  orderPackage,
   factoryCallback,
   nexoCallback,
   db = undefined,
+  runtime = {},
 } = {}) {
+  const findByIdempotencyKey =
+    runtime.findShopifyUpdateTaskByIdempotencyKey ??
+    findShopifyUpdateTaskByIdempotencyKey;
+  const createTask =
+    runtime.createShopifyUpdateTask ?? createShopifyUpdateTask;
   const draft = buildNexoShopifyUpdateTaskDraft({
     order,
-    job,
+    orderPackage,
     factoryCallback,
     nexoCallback,
   });
@@ -418,7 +425,7 @@ export async function ensureNexoShopifyUpdateTaskDryRun({
     };
   }
 
-  const existingTask = await findShopifyUpdateTaskByIdempotencyKey(
+  const existingTask = await findByIdempotencyKey(
     draft.idempotencyKey,
     db
   );
@@ -434,7 +441,7 @@ export async function ensureNexoShopifyUpdateTaskDryRun({
   }
 
   try {
-    const task = await createShopifyUpdateTask(draft, db);
+    const task = await createTask(draft, db);
 
     return {
       task,
@@ -446,7 +453,7 @@ export async function ensureNexoShopifyUpdateTaskDryRun({
       throw error;
     }
 
-    const task = await findShopifyUpdateTaskByIdempotencyKey(
+    const task = await findByIdempotencyKey(
       draft.idempotencyKey,
       db
     );

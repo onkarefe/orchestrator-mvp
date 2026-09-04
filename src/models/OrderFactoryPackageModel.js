@@ -65,8 +65,68 @@ export async function findOrderFactoryPackageByOrderId(
   return normalizePackage(rows[0]);
 }
 
+export async function findOrderFactoryPackageByShopifyOrderIdForUpdate(
+  shopifyOrderId,
+  db = pool
+) {
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
+    `SELECT * FROM order_factory_packages
+    WHERE shopify_order_id = ?
+    ORDER BY id ASC
+    LIMIT 2
+    FOR UPDATE`,
+    [String(shopifyOrderId)]
+  );
+
+  return rows.map(normalizePackage);
+}
+
+export async function findOrderFactoryPackageByNexoOrderIdForUpdate(
+  nexoOrderId,
+  db = pool
+) {
+  if (!nexoOrderId) {
+    return null;
+  }
+
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
+    `SELECT * FROM order_factory_packages
+    WHERE nexo_order_id = ? LIMIT 1 FOR UPDATE`,
+    [String(nexoOrderId)]
+  );
+
+  return normalizePackage(rows[0]);
+}
+
+export async function updateOrderFactoryPackageNexoState(
+  id,
+  { nexoOrderId, factoryStatus },
+  db = pool
+) {
+  const executor = getExecutor(db);
+  const [result] = await executor.execute(
+    `UPDATE order_factory_packages
+    SET nexo_order_id = COALESCE(NULLIF(nexo_order_id, ''), ?),
+      factory_status = ?
+    WHERE id = ?
+      AND (nexo_order_id IS NULL OR nexo_order_id = '' OR nexo_order_id = ?)`,
+    [String(nexoOrderId), factoryStatus, id, String(nexoOrderId)]
+  );
+
+  if (result.affectedRows !== 1) {
+    return null;
+  }
+
+  return findOrderFactoryPackageById(id, executor);
+}
+
 export default {
   createOrderFactoryPackage,
   findOrderFactoryPackageById,
   findOrderFactoryPackageByOrderId,
+  findOrderFactoryPackageByNexoOrderIdForUpdate,
+  findOrderFactoryPackageByShopifyOrderIdForUpdate,
+  updateOrderFactoryPackageNexoState,
 };
