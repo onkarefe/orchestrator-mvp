@@ -181,6 +181,31 @@ CREATE TABLE IF NOT EXISTS artifacts (
   CONSTRAINT fk_artifacts_job_id FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS order_factory_packages (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  order_id BIGINT UNSIGNED NOT NULL,
+  shopify_order_id VARCHAR(191) NOT NULL,
+  artifact_id BIGINT UNSIGNED NOT NULL,
+  order_number VARCHAR(191) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'ready',
+  package_dir VARCHAR(500) NOT NULL,
+  manifest_path VARCHAR(500) NOT NULL,
+  xml_file_name VARCHAR(255) NOT NULL,
+  file_count INT UNSIGNED NOT NULL,
+  content_checksum VARCHAR(128) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_order_factory_packages_order_id (order_id),
+  UNIQUE KEY uq_order_factory_packages_shopify_order_id (shopify_order_id),
+  UNIQUE KEY uq_order_factory_packages_artifact_id (artifact_id),
+  KEY idx_order_factory_packages_status (status),
+  CONSTRAINT fk_order_factory_packages_order_id
+    FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE RESTRICT,
+  CONSTRAINT fk_order_factory_packages_artifact_id
+    FOREIGN KEY (artifact_id) REFERENCES artifacts (id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS factory_callbacks (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   provider VARCHAR(100) NOT NULL DEFAULT 'factory_simulation',
@@ -267,8 +292,9 @@ CREATE TABLE IF NOT EXISTS shopify_update_tasks (
 CREATE TABLE IF NOT EXISTS factory_upload_tasks (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   order_id BIGINT UNSIGNED NOT NULL,
-  job_id BIGINT UNSIGNED NOT NULL,
+  job_id BIGINT UNSIGNED NULL,
   artifact_id BIGINT UNSIGNED NOT NULL,
+  order_factory_package_id BIGINT UNSIGNED NULL,
   shopify_order_id VARCHAR(64) NOT NULL,
   factory_reference VARCHAR(128) NOT NULL,
   status VARCHAR(32) NOT NULL DEFAULT 'pending',
@@ -286,6 +312,7 @@ CREATE TABLE IF NOT EXISTS factory_upload_tasks (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_factory_upload_tasks_artifact_id (artifact_id),
+  UNIQUE KEY uq_factory_upload_tasks_order_package (order_factory_package_id),
   KEY idx_factory_upload_tasks_job_id (job_id),
   KEY idx_factory_upload_tasks_order_id (order_id),
   KEY idx_factory_upload_tasks_shopify_order_id (shopify_order_id),
@@ -296,7 +323,9 @@ CREATE TABLE IF NOT EXISTS factory_upload_tasks (
   CONSTRAINT fk_factory_upload_tasks_job_id
     FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE RESTRICT,
   CONSTRAINT fk_factory_upload_tasks_artifact_id
-    FOREIGN KEY (artifact_id) REFERENCES artifacts (id) ON DELETE RESTRICT
+    FOREIGN KEY (artifact_id) REFERENCES artifacts (id) ON DELETE RESTRICT,
+  CONSTRAINT fk_factory_upload_tasks_order_package
+    FOREIGN KEY (order_factory_package_id) REFERENCES order_factory_packages (id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS settings (

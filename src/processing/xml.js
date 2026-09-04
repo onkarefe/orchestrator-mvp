@@ -1,5 +1,4 @@
-import env from '../config/env.js';
-import { buildFactoryReference } from '../utils/factoryReference.js';
+import { buildOrderFactoryIdentity } from './factoryFileNames.js';
 
 export function xmlEscape(value) {
   if (value === null || value === undefined) {
@@ -44,26 +43,14 @@ function formatMm(value) {
   return String(Number(numberValue.toFixed(3)));
 }
 
-function getShippingType(rawPayload) {
-  const shippingLine = Array.isArray(rawPayload?.shipping_lines)
-    ? rawPayload.shipping_lines[0]
-    : null;
-
-  return (
-    normalizeText(shippingLine?.code) ||
-    normalizeText(shippingLine?.title) ||
-    'Standard'
-  );
-}
-
 function getShippingFrom() {
   return {
-    company: env.NEXO_SHIPPING_FROM_COMPANY,
-    contactPerson: env.NEXO_SHIPPING_FROM_CONTACT_PERSON,
-    street: env.NEXO_SHIPPING_FROM_STREET,
-    postcode: env.NEXO_SHIPPING_FROM_POSTCODE,
-    city: env.NEXO_SHIPPING_FROM_CITY,
-    country: env.NEXO_SHIPPING_FROM_COUNTRY,
+    company: 'Wandini',
+    contactPerson: 'Wandini',
+    street: 'Rheinstrasse 12',
+    postcode: '41836',
+    city: 'Hückelhoven',
+    country: 'DE',
   };
 }
 
@@ -188,7 +175,21 @@ function getGeneratedPanels(panelFiles) {
   return panels;
 }
 
-function buildPositionXml(panels) {
+function buildPositionXml(position, index) {
+  const sku = normalizeText(position?.sku);
+  const copiesPerVariant = Number(position?.quantity);
+  const panels = getGeneratedPanels(position?.panelFiles);
+
+  if (!sku) {
+    throw new Error(`Wallpaper position ${index + 1} requires a non-empty SKU`);
+  }
+
+  if (!Number.isSafeInteger(copiesPerVariant) || copiesPerVariant <= 0) {
+    throw new Error(
+      `Wallpaper position ${index + 1} quantity must be a positive integer`
+    );
+  }
+
   const firstPanel = panels[0];
   const fileItems = panels
     .map(
@@ -198,39 +199,50 @@ function buildPositionXml(panels) {
     .join('\n');
 
   return `    <position>
-      <sku>${xmlEscape(env.NEXO_PRODUCT_SKU)}</sku>
+      <sku>${xmlEscape(sku)}</sku>
       <width unit="mm">${xmlEscape(formatMm(firstPanel.widthMm))}</width>
       <height unit="mm">${xmlEscape(formatMm(firstPanel.heightMm))}</height>
       <variants>${xmlEscape(panels.length)}</variants>
-      <copies_per_variant>1</copies_per_variant>
+      <copies_per_variant>${xmlEscape(copiesPerVariant)}</copies_per_variant>
       <files>
 ${fileItems}
       </files>
     </position>`;
 }
 
-export function buildOrderXml({ order, job, shopifyOrderId, panelFiles }) {
+export function buildOrderXml({ order, shopifyOrderId, positions }) {
   const rawPayload = parseJsonIfNeeded(order?.raw_payload_json);
 
   if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
     throw new Error('Shopify order payload is required for NEXO XML');
   }
 
-  const factoryReference = buildFactoryReference({
-    shopifyOrderId,
-    jobId: job?.id,
-  });
+  if (!Array.isArray(positions) || positions.length === 0) {
+    throw new Error('At least one wallpaper position is required for NEXO XML');
+  }
+
+  const positionFileNames = positions.flatMap((position) =>
+    (Array.isArray(position?.panelFiles) ? position.panelFiles : []).map(
+      (panel) => normalizeText(panel?.fileName)
+    )
+  );
+
+  if (new Set(positionFileNames).size !== positionFileNames.length) {
+    throw new Error('Wallpaper PDF filenames must be unique across positions');
+  }
+
+  const orderNumber = buildOrderFactoryIdentity(shopifyOrderId);
   const shippingFrom = getShippingFrom();
   const shippingTo = getShippingTo(rawPayload);
-  const panels = getGeneratedPanels(panelFiles);
-  const positionXml = buildPositionXml(panels);
+  const positionsXml = positions
+    .map((position, index) => buildPositionXml(position, index))
+    .join('\n');
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <root>
   <order>
-    <order_number>${xmlEscape(factoryReference)}</order_number>
-    <reference>${xmlEscape(factoryReference)}</reference>
-    <shipping_type>${xmlEscape(getShippingType(rawPayload))}</shipping_type>
+    <order_number>${xmlEscape(orderNumber)}</order_number>
+    <shipping_type>Standard</shipping_type>
     <shipping_from>
       <company>${xmlEscape(shippingFrom.company)}</company>
       <contact_person>${xmlEscape(shippingFrom.contactPerson)}</contact_person>
@@ -250,7 +262,7 @@ export function buildOrderXml({ order, job, shopifyOrderId, panelFiles }) {
     </shipping_to>
   </order>
   <positions>
-${positionXml}
+${positionsXml}
   </positions>
 </root>`;
 }

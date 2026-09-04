@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
 import { computePanelsFromOutputMm } from '../src/processing/panels.js';
+import { buildWallpaperPanelFileName } from '../src/processing/factoryFileNames.js';
 import { buildOrderXml } from '../src/processing/xml.js';
 
 const order = {
@@ -31,28 +32,25 @@ const order = {
   }),
 };
 
-const job = {
-  shopify_line_item_id: 111,
-  width_mm: 5000,
-  height_mm: 2000,
-};
-
 function buildPanelFiles({ shopifyOrderId, panelCount, panelWidthMm, heightMm }) {
   return Array.from({ length: panelCount }, (_, index) => ({
-    fileName: `w-${shopifyOrderId}-${String(index + 1).padStart(2, '0')}.pdf`,
+    fileName: buildWallpaperPanelFileName({
+      shopifyOrderId,
+      sourcePosition: 0,
+      panelNumber: index + 1,
+    }),
     widthMm: panelWidthMm,
     heightMm,
   }));
 }
 
 function assertPanelCase({
-  jobId,
   widthMm,
   expectedPanelCount,
   expectedPanelWidthMm,
 }) {
   const shopifyOrderId = '7217548394776';
-  const factoryReference = `WANDINI-S${shopifyOrderId}-J${jobId}`;
+  const orderNumber = `WANDINI-S${shopifyOrderId}`;
   const heightMm = 2000;
   const panelInfo = computePanelsFromOutputMm(widthMm);
   const panelWidthMm = panelInfo.panelWidthCm * 10;
@@ -64,14 +62,14 @@ function assertPanelCase({
   });
   const xml = buildOrderXml({
     order,
-    job: {
-      ...job,
-      id: jobId,
-      width_mm: widthMm,
-      height_mm: heightMm,
-    },
     shopifyOrderId,
-    panelFiles,
+    positions: [
+      {
+        sku: 'wandini-prod1-b',
+        quantity: 1,
+        panelFiles,
+      },
+    ],
   });
 
   assert.equal(panelInfo.panelCount, expectedPanelCount);
@@ -80,9 +78,14 @@ function assertPanelCase({
   assert.equal((xml.match(/<position>/g) ?? []).length, 1);
   assert.equal((xml.match(/<file type="ftp">/g) ?? []).length, expectedPanelCount);
   assert.ok(
-    xml.includes(`<order_number>${factoryReference}</order_number>`)
+    xml.includes(`<order_number>${orderNumber}</order_number>`)
   );
-  assert.ok(xml.includes(`<reference>${factoryReference}</reference>`));
+  assert.ok(!xml.includes('<reference>'));
+  assert.ok(xml.includes('<shipping_type>Standard</shipping_type>'));
+  assert.ok(xml.includes('<company>Wandini</company>'));
+  assert.ok(xml.includes('<street>Rheinstrasse 12</street>'));
+  assert.ok(xml.includes('<postcode>41836</postcode>'));
+  assert.ok(xml.includes('<city>Hückelhoven</city>'));
   assert.match(xml, new RegExp(`<width unit="mm">${expectedPanelWidthMm}</width>`));
   assert.match(xml, new RegExp(`<height unit="mm">${heightMm}</height>`));
   assert.match(xml, new RegExp(`<variants>${expectedPanelCount}</variants>`));
@@ -92,13 +95,11 @@ function assertPanelCase({
 
 const cases = [
   assertPanelCase({
-    jobId: 9001,
     widthMm: 5000,
     expectedPanelCount: 8,
     expectedPanelWidthMm: 625,
   }),
   assertPanelCase({
-    jobId: 9002,
     widthMm: 4725,
     expectedPanelCount: 7,
     expectedPanelWidthMm: 675,

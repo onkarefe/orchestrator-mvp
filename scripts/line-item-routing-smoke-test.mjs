@@ -9,7 +9,7 @@ import {
   FACTORY_DISPATCH_BLOCK_REASONS,
   evaluateFactoryDispatchGate,
 } from '../src/services/FactoryDispatchGateService.js';
-import { ensureFactoryUploadTask } from '../src/services/FactoryUploadTaskService.js';
+import { ensureOrderFactoryUploadTask } from '../src/services/FactoryUploadTaskService.js';
 import { createConfiguratorJobFromLineItem } from '../src/services/JobService.js';
 import { classifyShopifyLineItem } from '../src/services/LineItemRoutingService.js';
 
@@ -249,17 +249,24 @@ function orderFor(...lineItems) {
   };
 }
 
-const factoryJob = {
-  id: 11,
+const orderPackage = {
+  id: 31,
   order_id: 1,
-  factory_reference: 'WANDINI-S9001-J11',
-  status: 'completed',
+  artifact_id: 21,
+  order_number: 'WANDINI-S9001',
+  status: 'ready',
+  manifest_path: 'C:/factory/order-9001/manifest.json',
+  xml_file_name: 'WANDINI-S9001.xml',
 };
 const artifact = {
   id: 21,
   order_id: 1,
-  job_id: 11,
+  job_id: null,
+  type: 'factory_package',
+  status: 'available',
   validation_status: 'passed',
+  manifest_path: 'C:/factory/order-9001/manifest.json',
+  file_name: 'WANDINI-S9001.xml',
 };
 const factoryConfig = {
   FTP_REMOTE_DIR: '/factory',
@@ -267,14 +274,15 @@ const factoryConfig = {
 };
 let createdTaskCount = 0;
 const factoryRuntime = {
-  findFactoryUploadTaskByArtifactId: async () => null,
+  findFactoryUploadTaskByOrderPackageId: async () => null,
   createFactoryUploadTask: async (data) => {
     createdTaskCount += 1;
     return {
       id: createdTaskCount,
       order_id: data.orderId,
-      job_id: data.jobId,
+      job_id: null,
       artifact_id: data.artifactId,
+      order_factory_package_id: data.orderFactoryPackageId,
       shopify_order_id: String(data.shopifyOrderId),
       factory_reference: data.factoryReference,
       status: data.status,
@@ -297,9 +305,9 @@ assert.equal(
   }).allowed,
   true
 );
-const validFactoryTask = await ensureFactoryUploadTask({
+const validFactoryTask = await ensureOrderFactoryUploadTask({
   order: wallpaperOnlyOrder,
-  job: factoryJob,
+  orderPackage,
   artifact,
   config: factoryConfig,
   orderLineItems: wallpaperOnlyLines,
@@ -344,9 +352,9 @@ for (const blockedCase of blockedCases) {
   assert.equal(gate.allowed, false);
   assert.equal(gate.reason, blockedCase.reason);
 
-  const result = await ensureFactoryUploadTask({
+  const result = await ensureOrderFactoryUploadTask({
     order: blockedCase.order,
-    job: factoryJob,
+    orderPackage,
     artifact,
     config: factoryConfig,
     orderLineItems: blockedCase.lines,

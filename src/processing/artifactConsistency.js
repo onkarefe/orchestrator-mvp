@@ -36,6 +36,7 @@ export async function validateArtifactConsistency({
   pageWidthMm,
   pageHeightMm,
   manifest = null,
+  xmlRequired = true,
 }) {
   const errors = [];
   const warnings = [];
@@ -48,27 +49,29 @@ export async function validateArtifactConsistency({
   const fileEntryNames = new Set(safeFileEntries.map((entry) => entry.name));
   const expectedPanelCount = Number(panelInfo?.panelCount);
   const expectedFileCount = Number.isFinite(expectedPanelCount)
-    ? expectedPanelCount + 1
+    ? expectedPanelCount + (xmlRequired ? 1 : 0)
     : null;
   const generatedPdfEntryCount = safeFileEntries.filter((entry) =>
     panelFileNames.has(entry.name)
   ).length;
 
-  if (!xmlFileName) {
-    pushError(errors, 'missing_xml_file_name');
-  }
+  if (xmlRequired) {
+    if (!xmlFileName) {
+      pushError(errors, 'missing_xml_file_name');
+    }
 
-  if (!xmlFilePath || !(await fileExists(xmlFilePath))) {
-    pushError(errors, 'missing_xml_file', {
-      fileName: xmlFileName ?? null,
-      filePath: xmlFilePath ?? null,
-    });
-  }
+    if (!xmlFilePath || !(await fileExists(xmlFilePath))) {
+      pushError(errors, 'missing_xml_file', {
+        fileName: xmlFileName ?? null,
+        filePath: xmlFilePath ?? null,
+      });
+    }
 
-  if (!fileEntryNames.has(xmlFileName)) {
-    pushError(errors, 'xml_missing_from_zip_entries', {
-      fileName: xmlFileName ?? null,
-    });
+    if (!fileEntryNames.has(xmlFileName)) {
+      pushError(errors, 'xml_missing_from_zip_entries', {
+        fileName: xmlFileName ?? null,
+      });
+    }
   }
 
   if (!Number.isFinite(expectedPanelCount)) {

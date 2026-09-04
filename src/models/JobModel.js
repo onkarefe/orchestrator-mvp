@@ -245,6 +245,17 @@ export async function listJobs({ status, orderId, limit, offset } = {}) {
   return rows.map(normalizeJob);
 }
 
+export async function listJobsByOrderId(orderId, db = pool) {
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
+    `SELECT * FROM jobs
+    WHERE order_id = ? ORDER BY created_at ASC, id ASC`,
+    [orderId]
+  );
+
+  return rows.map(normalizeJob);
+}
+
 export async function claimNextPendingJob(options = {}) {
   const { workerId, maxAttempts } = normalizeClaimOptions(options);
   const connection = await pool.getConnection();
@@ -506,6 +517,7 @@ export default {
   findJobByNexoJobIdForUpdate,
   updateJobNexoState,
   listJobs,
+  listJobsByOrderId,
   claimNextPendingJob,
   claimPendingJobById,
   updateJobStatus,

@@ -14,8 +14,13 @@ function normalizeArtifact(row) {
   return row ? { ...row } : null;
 }
 
-export async function createArtifact(data) {
-  const [result] = await pool.execute(
+function getExecutor(db) {
+  return db ?? pool;
+}
+
+export async function createArtifact(data, db = pool) {
+  const executor = getExecutor(db);
+  const [result] = await executor.execute(
     `INSERT INTO artifacts (
       order_id,
       job_id,
@@ -50,13 +55,25 @@ export async function createArtifact(data) {
     ]
   );
 
-  return findArtifactById(result.insertId);
+  return findArtifactById(result.insertId, executor);
 }
 
-export async function findArtifactById(id) {
-  const [rows] = await pool.execute('SELECT * FROM artifacts WHERE id = ? LIMIT 1', [id]);
+export async function findArtifactById(id, db = pool) {
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute('SELECT * FROM artifacts WHERE id = ? LIMIT 1', [id]);
 
   return normalizeArtifact(rows[0]);
+}
+
+export async function listArtifactsByOrderId(orderId, db = pool) {
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
+    `SELECT * FROM artifacts
+    WHERE order_id = ? ORDER BY created_at ASC, id ASC`,
+    [orderId]
+  );
+
+  return rows.map(normalizeArtifact);
 }
 
 export async function listArtifacts({ orderId, jobId, status, limit, offset } = {}) {
@@ -107,6 +124,7 @@ export async function markArtifactDeleted(id) {
 export default {
   createArtifact,
   findArtifactById,
+  listArtifactsByOrderId,
   listArtifacts,
   incrementDownloadCount,
   markArtifactDeleted,

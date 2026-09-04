@@ -82,6 +82,7 @@ export async function createFactoryUploadTask(data, db = pool) {
       order_id,
       job_id,
       artifact_id,
+      order_factory_package_id,
       shopify_order_id,
       factory_reference,
       status,
@@ -92,11 +93,12 @@ export async function createFactoryUploadTask(data, db = pool) {
       last_error,
       attempt_count,
       max_attempts
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.orderId ?? data.order_id,
-      data.jobId ?? data.job_id,
+      data.jobId ?? data.job_id ?? null,
       data.artifactId ?? data.artifact_id,
+      data.orderFactoryPackageId ?? data.order_factory_package_id ?? null,
       String(data.shopifyOrderId ?? data.shopify_order_id),
       data.factoryReference ?? data.factory_reference,
       data.status ?? FACTORY_UPLOAD_TASK_STATUSES.PENDING,
@@ -131,6 +133,20 @@ export async function findFactoryUploadTaskByArtifactId(
   const [rows] = await executor.execute(
     'SELECT * FROM factory_upload_tasks WHERE artifact_id = ? LIMIT 1',
     [artifactId]
+  );
+
+  return normalizeFactoryUploadTask(rows[0]);
+}
+
+export async function findFactoryUploadTaskByOrderPackageId(
+  orderFactoryPackageId,
+  db = pool
+) {
+  const executor = getExecutor(db);
+  const [rows] = await executor.execute(
+    `SELECT * FROM factory_upload_tasks
+    WHERE order_factory_package_id = ? LIMIT 1`,
+    [orderFactoryPackageId]
   );
 
   return normalizeFactoryUploadTask(rows[0]);
@@ -576,6 +592,7 @@ export default {
   createFactoryUploadTask,
   findFactoryUploadTaskByArtifactId,
   findFactoryUploadTaskById,
+  findFactoryUploadTaskByOrderPackageId,
   listFactoryUploadTasks,
   markFactoryUploadTaskDisposition,
   markFactoryUploadTaskFailed,

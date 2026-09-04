@@ -11,14 +11,17 @@ import { calculateSafeCrop, getImageMetadata } from './image.js';
 import {
   createJobWorkspace,
   isPathInside,
-  sanitizePathSegment,
 } from './jobWorkspace.js';
+import { buildWallpaperPanelFileName } from './factoryFileNames.js';
 import { resolveMasterPath } from './masterResolver.js';
 import { buildPanelPixelWidths, computePanelsFromOutputMm } from './panels.js';
 import { createPanelPdfFile } from './pdf.js';
 import { isValidCropRatio } from './validation.js';
-import { buildOrderXml } from './xml.js';
 import { createZipFromFileEntries } from './zip.js';
+import {
+  LINE_ITEM_CLASSIFICATIONS,
+  LINE_ITEM_ROUTING_STATES,
+} from '../constants/lineItemRouting.js';
 
 function parseJsonIfNeeded(value) {
   if (value === null || value === undefined || typeof value !== 'string') {
@@ -138,13 +141,31 @@ function validateJob(job) {
   };
 }
 
-export async function processJobToZip({ order, job }) {
+function validateOrderLineItem(order, job, lineItem) {
+  if (
+    !lineItem ||
+    String(lineItem.order_id) !== String(order?.id) ||
+    String(lineItem.shopify_line_item_id) !==
+      String(job?.shopify_line_item_id) ||
+    lineItem.classification !== LINE_ITEM_CLASSIFICATIONS.WALLPAPER ||
+    lineItem.routing_state !== LINE_ITEM_ROUTING_STATES.PRODUCTION_READY
+  ) {
+    throw new Error('A production-ready persisted wallpaper line item is required');
+  }
+
+  const sourcePosition = Number(lineItem.source_position);
+
+  if (!Number.isSafeInteger(sourcePosition) || sourcePosition < 0) {
+    throw new Error('Persisted wallpaper source position is invalid');
+  }
+
+  return sourcePosition;
+}
+
+export async function processJobToZip({ order, job, lineItem }) {
   const { widthMm, heightMm, cropRatio } = validateJob(job);
+  const sourcePosition = validateOrderLineItem(order, job, lineItem);
   const shopifyOrderId = getShopifyOrderId(order);
-  const safeShopifyOrderId = sanitizePathSegment(
-    shopifyOrderId,
-    'shopify-order'
-  );
   const masterPath = resolveMasterPath(job.master_asset_id);
   const panelInfo = computePanelsFromOutputMm(widthMm);
   const metadata = await getImageMetadata(masterPath);
@@ -162,8 +183,11 @@ export async function processJobToZip({ order, job }) {
   let panelLeft = safeCrop.left;
 
   for (let index = 0; index < panelPixelWidths.length; index += 1) {
-    const panelNumber = String(index + 1).padStart(2, '0');
-    const panelFileName = `w-${safeShopifyOrderId}-${panelNumber}.pdf`;
+    const panelFileName = buildWallpaperPanelFileName({
+      shopifyOrderId,
+      sourcePosition,
+      panelNumber: index + 1,
+    });
     const tempPanelPath = path.join(workspace.panelsDir, panelFileName);
     const panelCrop = {
       left: panelLeft,
@@ -194,37 +218,15 @@ export async function processJobToZip({ order, job }) {
     panelLeft += panelPixelWidths[index];
   }
 
-  const xmlFileName = `w-${safeShopifyOrderId}.xml`;
-  const xmlTempPath = path.join(workspace.workDir, xmlFileName);
-
-  await fs.writeFile(
-    xmlTempPath,
-    buildOrderXml({
-      order,
-      job: {
-        ...job,
-        width_mm: widthMm,
-        height_mm: heightMm,
-      },
-      shopifyOrderId,
-      panelFiles,
-    }),
-    'utf8'
-  );
-
-  fileEntries.unshift({
-    name: xmlFileName,
-    filePath: xmlTempPath,
-  });
-
   const validationResult = await validateArtifactConsistency({
-    xmlFileName,
-    xmlFilePath: xmlTempPath,
+    xmlFileName: null,
+    xmlFilePath: null,
     panelFiles,
     fileEntries,
     panelInfo,
     pageWidthMm,
     pageHeightMm: heightMm,
+    xmlRequired: false,
   });
 
   assertArtifactConsistency(validationResult);
@@ -244,17 +246,13 @@ export async function processJobToZip({ order, job }) {
     zipPath: workspace.finalZipPath,
     panelFiles,
     panelInfo,
-    xmlFileName,
+    xmlFileName: null,
     fileEntries: persistedFileEntries,
     widthMm,
     heightMm,
     cropRatio,
     validationResult,
   });
-  const xmlPath = persistedFileEntries.find(
-    (entry) => entry.name === xmlFileName
-  )?.filePath;
-
   return {
     zipPath: workspace.finalZipPath,
     zipFileName: workspace.zipFileName,
@@ -268,8 +266,8 @@ export async function processJobToZip({ order, job }) {
     fileCount: persistedFileEntries.length,
     artifactDir: workspace.finalDir,
     factoryFilesDir: workspace.factoryFilesDir,
-    xmlFileName,
-    xmlPath,
+    xmlFileName: null,
+    xmlPath: null,
     factoryFileEntries: persistedFileEntries,
     workDir: workspace.workDir,
     runId: workspace.runId,

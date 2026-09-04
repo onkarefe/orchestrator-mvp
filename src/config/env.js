@@ -208,30 +208,6 @@ const env = {
     true
   ),
   NEXO_CALLBACK_API_KEY: process.env.NEXO_CALLBACK_API_KEY ?? '',
-  NEXO_PRODUCT_SKU: stringFromEnv('NEXO_PRODUCT_SKU', '1.14-1.3.10'),
-  NEXO_SHIPPING_FROM_COMPANY: stringFromEnv(
-    'NEXO_SHIPPING_FROM_COMPANY',
-    'Werbeagentur XY GmbH'
-  ),
-  NEXO_SHIPPING_FROM_CONTACT_PERSON: stringFromEnv(
-    'NEXO_SHIPPING_FROM_CONTACT_PERSON'
-  ),
-  NEXO_SHIPPING_FROM_STREET: stringFromEnv(
-    'NEXO_SHIPPING_FROM_STREET',
-    'Musterstr. 4'
-  ),
-  NEXO_SHIPPING_FROM_POSTCODE: stringFromEnv(
-    'NEXO_SHIPPING_FROM_POSTCODE',
-    '12345'
-  ),
-  NEXO_SHIPPING_FROM_CITY: stringFromEnv(
-    'NEXO_SHIPPING_FROM_CITY',
-    'Musterstadt'
-  ),
-  NEXO_SHIPPING_FROM_COUNTRY: stringFromEnv(
-    'NEXO_SHIPPING_FROM_COUNTRY',
-    'DE'
-  ),
   PROCESSING_MIN_FREE_DISK_MB: integerFromEnv(
     'PROCESSING_MIN_FREE_DISK_MB',
     1024,

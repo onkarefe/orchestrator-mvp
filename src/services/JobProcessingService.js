@@ -14,9 +14,11 @@ import {
   releaseStaleProcessingJobs as releaseStaleProcessingJobsInModel,
 } from '../models/JobModel.js';
 import { findOrderById, updateOrderStatus } from '../models/OrderModel.js';
+import { findOrderLineItemByIdentity } from '../models/OrderLineItemModel.js';
 import { processJobToZip } from '../processing/Processor.js';
 import { checkProcessingDiskSpace } from './DiskGuardService.js';
-import { ensureAndProcessFactoryUpload } from './FactoryUploadService.js';
+import { processFactoryUploadTaskById } from './FactoryUploadService.js';
+import { ensureOrderFactoryPackage } from './OrderFactoryPackageService.js';
 import { logError, logInfo } from './LogService.js';
 import { safeErrorForLog } from '../utils/redact.js';
 
@@ -226,6 +228,11 @@ async function processClaimedJob(job, { workerId = getWorkerId() } = {}) {
       throw new Error(`Related order not found for job: ${job.id}`);
     }
 
+    const lineItem = await findOrderLineItemByIdentity(
+      order.shopify_order_id,
+      job.shopify_line_item_id,
+      null
+    );
     const diskSpace = await checkProcessingDiskSpace();
 
     if (!diskSpace.ok) {
@@ -266,7 +273,7 @@ async function processClaimedJob(job, { workerId = getWorkerId() } = {}) {
       },
     });
 
-    const result = await processJobToZip({ order, job });
+    const result = await processJobToZip({ order, job, lineItem });
     const artifact = await createArtifact({
       orderId: order.id,
       jobId: job.id,
@@ -282,7 +289,7 @@ async function processClaimedJob(job, { workerId = getWorkerId() } = {}) {
       validationStatus: result.validationResult?.validationStatus ?? 'pending',
     });
 
-    const completedJob = await markJobCompletedWithArtifactManifest(
+    await markJobCompletedWithArtifactManifest(
       job.id,
       result.manifestPath
     );
@@ -307,12 +314,18 @@ async function processClaimedJob(job, { workerId = getWorkerId() } = {}) {
     let factoryUpload = null;
 
     try {
-      factoryUpload = await ensureAndProcessFactoryUpload({
-        order,
-        job: completedJob,
-        artifact,
-        workerId,
+      const packageResult = await ensureOrderFactoryPackage({
+        orderId: order.id,
       });
+
+      factoryUpload = packageResult.task
+        ? {
+            ...packageResult,
+            ...(await processFactoryUploadTaskById(packageResult.task.id, {
+              workerId,
+            })),
+          }
+        : packageResult;
     } catch (uploadIntegrationError) {
       factoryUpload = {
         disposition: 'integration_failed',
@@ -325,9 +338,9 @@ async function processClaimedJob(job, { workerId = getWorkerId() } = {}) {
         scopeType: 'job',
         orderId: order.id,
         jobId: job.id,
-        step: 'factory_upload.integration_failed',
+        step: 'factory_package.integration_failed',
         message:
-          'Factory upload task integration failed without changing job completion',
+          'Order factory package integration failed without changing job completion',
         detailsJson: {
           artifactId: artifact.id,
           error: safeErrorForLog(uploadIntegrationError),

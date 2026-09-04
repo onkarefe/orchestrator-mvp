@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -12,7 +13,6 @@ import {
 import { artifactsDir } from '../config/paths.js';
 import {
   FACTORY_UPLOAD_TASK_STATUSES,
-  JOB_STATUSES,
 } from '../constants/statuses.js';
 import { findArtifactById } from '../models/ArtifactModel.js';
 import {
@@ -28,16 +28,17 @@ import {
   requeueTemporarilySuppressedFactoryUploadTask,
   updateFactoryUploadTaskProgress,
 } from '../models/FactoryUploadTaskModel.js';
-import { findJobById } from '../models/JobModel.js';
 import { findOrderById } from '../models/OrderModel.js';
+import { findOrderFactoryPackageById } from '../models/OrderFactoryPackageModel.js';
 import { listOrderLineItemsByOrderId } from '../models/OrderLineItemModel.js';
+import { calculateFileSha256 } from '../processing/artifactManifest.js';
 import { isPathInside } from '../processing/jobWorkspace.js';
+import { ORDER_FACTORY_PACKAGE_SCHEMA } from '../processing/OrderFactoryPackageAssembler.js';
 import {
   redactSensitiveText,
   safeErrorForLog,
 } from '../utils/redact.js';
 import FactoryFtpClient, { FactoryFtpError } from './FactoryFtpClient.js';
-import { ensureFactoryUploadTask } from './FactoryUploadTaskService.js';
 import { evaluateFactoryDispatchGate } from './FactoryDispatchGateService.js';
 import { logError, logInfo, logWarning } from './LogService.js';
 
@@ -73,7 +74,7 @@ function assertSafeFileName(value, { extension } = {}) {
   return fileName;
 }
 
-function resolveManifestSourcePath(sourcePath, localRoot) {
+function resolveManifestSourcePath(sourcePath, localRoot, artifactsRoot) {
   const candidate = String(sourcePath ?? '').trim();
 
   if (!candidate) {
@@ -89,7 +90,7 @@ function resolveManifestSourcePath(sourcePath, localRoot) {
 
   if (
     !isPathInside(resolvedPath, localRoot) ||
-    !isPathInside(resolvedPath, artifactsDir)
+    !isPathInside(resolvedPath, artifactsRoot)
   ) {
     throw new FactoryUploadSafetyError(
       'artifact_source_path_escaped',
@@ -202,7 +203,11 @@ export function extractPdfFileNamesFromXml(xml) {
   return fileNames;
 }
 
-export async function resolveFactoryUploadFiles({ artifact } = {}) {
+export async function resolveFactoryUploadFiles({
+  artifact,
+  orderPackage,
+  artifactsRoot = artifactsDir,
+} = {}) {
   if (!artifact?.manifest_path) {
     throw new FactoryUploadSafetyError(
       'artifact_manifest_missing',
@@ -212,7 +217,7 @@ export async function resolveFactoryUploadFiles({ artifact } = {}) {
 
   let manifestPath = path.resolve(artifact.manifest_path);
 
-  if (!isPathInside(manifestPath, artifactsDir)) {
+  if (!isPathInside(manifestPath, artifactsRoot)) {
     throw new FactoryUploadSafetyError(
       'artifact_manifest_path_escaped',
       'Artifact manifest escaped artifact storage'
@@ -222,7 +227,7 @@ export async function resolveFactoryUploadFiles({ artifact } = {}) {
   manifestPath = await assertLocalFile(
     manifestPath,
     'artifact_manifest_missing',
-    [artifactsDir]
+    [artifactsRoot]
   );
 
   let manifest;
@@ -240,9 +245,27 @@ export async function resolveFactoryUploadFiles({ artifact } = {}) {
     );
   }
 
+  if (manifest?.schema !== ORDER_FACTORY_PACKAGE_SCHEMA) {
+    throw new FactoryUploadSafetyError(
+      'factory_package_manifest_schema_invalid',
+      'Artifact manifest is not an order-level factory package'
+    );
+  }
+
   const entries = Array.isArray(manifest?.contents?.files)
     ? manifest.contents.files
     : [];
+  const entryNames = entries.map((entry) => String(entry?.name ?? ''));
+
+  if (
+    Number(manifest?.contents?.file_count) !== entries.length ||
+    new Set(entryNames).size !== entryNames.length
+  ) {
+    throw new FactoryUploadSafetyError(
+      'factory_package_manifest_file_set_invalid',
+      'Factory package manifest file set is inconsistent'
+    );
+  }
   const xmlEntries = entries.filter((entry) =>
     String(entry?.name ?? '').toLowerCase().endsWith('.xml')
   );
@@ -264,18 +287,31 @@ export async function resolveFactoryUploadFiles({ artifact } = {}) {
   const localRoot = path.dirname(manifestPath);
   let xmlPath = resolveManifestSourcePath(
     xmlEntries[0].source_path,
-    localRoot
+    localRoot,
+    artifactsRoot
   );
 
   xmlPath = await assertLocalFile(xmlPath, 'xml_missing', [
     localRoot,
-    artifactsDir,
+    artifactsRoot,
   ]);
 
   if (path.basename(xmlPath) !== configuredXmlFileName) {
     throw new FactoryUploadSafetyError(
       'xml_source_name_mismatch',
       'Production XML source path does not match its filename'
+    );
+  }
+
+  const xmlChecksum = await calculateFileSha256(xmlPath);
+
+  if (
+    xmlChecksum !== String(xmlEntries[0]?.checksum_sha256 ?? '') ||
+    xmlChecksum !== String(artifact.checksum ?? '')
+  ) {
+    throw new FactoryUploadSafetyError(
+      'factory_package_xml_checksum_mismatch',
+      'Production XML checksum does not match durable package metadata'
     );
   }
 
@@ -307,18 +343,28 @@ export async function resolveFactoryUploadFiles({ artifact } = {}) {
 
     let filePath = resolveManifestSourcePath(
       matchingEntries[0].source_path,
-      localRoot
+      localRoot,
+      artifactsRoot
     );
 
     filePath = await assertLocalFile(filePath, 'pdf_missing', [
       localRoot,
-      artifactsDir,
+      artifactsRoot,
     ]);
 
     if (path.basename(filePath) !== fileName) {
       throw new FactoryUploadSafetyError(
         'pdf_source_name_mismatch',
         'PDF source path does not match the filename referenced by XML'
+      );
+    }
+
+    const fileChecksum = await calculateFileSha256(filePath);
+
+    if (fileChecksum !== String(matchingEntries[0]?.checksum_sha256 ?? '')) {
+      throw new FactoryUploadSafetyError(
+        'factory_package_pdf_checksum_mismatch',
+        'Production PDF checksum does not match the package manifest'
       );
     }
 
@@ -334,6 +380,42 @@ export async function resolveFactoryUploadFiles({ artifact } = {}) {
       fileName,
       filePath,
     });
+  }
+
+  const selectedNames = new Set([
+    ...pdfFiles.map((file) => file.fileName),
+    configuredXmlFileName,
+  ]);
+
+  if (
+    entries.length !== selectedNames.size ||
+    entries.some((entry) => !selectedNames.has(String(entry?.name ?? '')))
+  ) {
+    throw new FactoryUploadSafetyError(
+      'factory_package_unreferenced_file',
+      'Factory package contains a file not referenced by its XML'
+    );
+  }
+
+  const contentChecksum = crypto
+    .createHash('sha256')
+    .update(
+      entries
+        .map((entry) => `${entry.name}:${entry.checksum_sha256}`)
+        .join('\n')
+    )
+    .digest('hex');
+
+  if (
+    contentChecksum !==
+      String(manifest?.package?.content_checksum_sha256 ?? '') ||
+    (orderPackage &&
+      contentChecksum !== String(orderPackage.content_checksum ?? ''))
+  ) {
+    throw new FactoryUploadSafetyError(
+      'factory_package_content_checksum_mismatch',
+      'Factory package content checksum is invalid'
+    );
   }
 
   return {
@@ -390,12 +472,18 @@ function getTaskReadinessReason({ task, config }) {
 function getTaskSafetyDisposition({
   task,
   order,
-  job,
   artifact,
+  orderPackage,
   orderLineItems,
-  config,
 }) {
-  if (!order || !job || !artifact) {
+  if (!task.order_factory_package_id) {
+    return {
+      status: FACTORY_UPLOAD_TASK_STATUSES.SKIPPED,
+      reason: 'legacy_job_level_factory_task_blocked',
+    };
+  }
+
+  if (!order || !artifact || !orderPackage) {
     return {
       status: FACTORY_UPLOAD_TASK_STATUSES.SKIPPED,
       reason: 'factory_upload_related_record_missing',
@@ -404,10 +492,21 @@ function getTaskSafetyDisposition({
 
   if (
     String(order.id) !== String(task.order_id) ||
-    String(job.id) !== String(task.job_id) ||
     String(artifact.id) !== String(task.artifact_id) ||
+    String(orderPackage.id) !== String(task.order_factory_package_id) ||
+    String(orderPackage.order_id) !== String(order.id) ||
+    String(orderPackage.artifact_id) !== String(artifact.id) ||
     String(order.shopify_order_id) !== String(task.shopify_order_id) ||
-    job.factory_reference !== task.factory_reference
+    orderPackage.order_number !== task.factory_reference ||
+    path.resolve(String(orderPackage.manifest_path ?? '')) !==
+      path.resolve(String(artifact.manifest_path ?? '')) ||
+    path.resolve(String(orderPackage.package_dir ?? '')) !==
+      path.dirname(path.resolve(String(artifact.manifest_path ?? ''))) ||
+    orderPackage.xml_file_name !== artifact.file_name ||
+    task.job_id !== null ||
+    artifact.job_id !== null ||
+    artifact.type !== 'factory_package' ||
+    artifact.status !== 'available'
   ) {
     return {
       status: FACTORY_UPLOAD_TASK_STATUSES.SKIPPED,
@@ -427,17 +526,10 @@ function getTaskSafetyDisposition({
     };
   }
 
-  if (job.status === JOB_STATUSES.MANUAL_REVIEW) {
+  if (orderPackage.status !== 'ready') {
     return {
       status: FACTORY_UPLOAD_TASK_STATUSES.SKIPPED,
-      reason: 'job_manual_review',
-    };
-  }
-
-  if (job.status === JOB_STATUSES.FAILED) {
-    return {
-      status: FACTORY_UPLOAD_TASK_STATUSES.SKIPPED,
-      reason: 'job_failed',
+      reason: 'order_factory_package_not_ready',
     };
   }
 
@@ -696,19 +788,20 @@ export async function processClaimedFactoryUploadTask({
     return recordNotReady(task, readinessReason, workerId);
   }
 
-  const [order, job, artifact, orderLineItems] = await Promise.all([
+  const [order, artifact, orderPackage, orderLineItems] = await Promise.all([
     findOrderById(task.order_id),
-    findJobById(task.job_id),
     findArtifactById(task.artifact_id),
+    task.order_factory_package_id
+      ? findOrderFactoryPackageById(task.order_factory_package_id)
+      : Promise.resolve(null),
     listOrderLineItemsByOrderId(task.order_id),
   ]);
   const safetyDisposition = getTaskSafetyDisposition({
     task,
     order,
-    job,
     artifact,
+    orderPackage,
     orderLineItems,
-    config,
   });
 
   if (safetyDisposition) {
@@ -718,7 +811,10 @@ export async function processClaimedFactoryUploadTask({
   let selectedFiles;
 
   try {
-    const resolvedFiles = await resolveFactoryUploadFiles({ artifact });
+    const resolvedFiles = await resolveFactoryUploadFiles({
+      artifact,
+      orderPackage,
+    });
     selectedFiles = [...resolvedFiles.pdfFiles, resolvedFiles.xmlFile];
   } catch (error) {
     if (error instanceof FactoryUploadSafetyError) {
@@ -921,48 +1017,6 @@ export async function processFactoryUploadTaskById(
   });
 }
 
-export async function ensureAndProcessFactoryUpload({
-  order,
-  job,
-  artifact,
-  workerId,
-  config = env,
-  ftpClientFactory,
-} = {}) {
-  const ensured = await ensureFactoryUploadTask({
-    order,
-    job,
-    artifact,
-    config,
-  });
-
-  if (!ensured.task) {
-    return {
-      ...ensured,
-      disposition: 'blocked',
-    };
-  }
-
-  if (ensured.task.status !== FACTORY_UPLOAD_TASK_STATUSES.PENDING) {
-    return {
-      ...ensured,
-      disposition: ensured.task.status,
-      reason: ensured.task.suppressed_reason,
-    };
-  }
-
-  const outcome = await processFactoryUploadTaskById(ensured.task.id, {
-    workerId,
-    config,
-    ftpClientFactory,
-  });
-
-  return {
-    ...ensured,
-    ...outcome,
-  };
-}
-
 export async function processNextFactoryUploadTask({
   workerId,
   config = env,
@@ -1009,7 +1063,6 @@ export async function processNextFactoryUploadTask({
 }
 
 export default {
-  ensureAndProcessFactoryUpload,
   extractPdfFileNamesFromXml,
   processClaimedFactoryUploadTask,
   processFactoryUploadTaskById,
