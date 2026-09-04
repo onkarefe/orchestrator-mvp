@@ -166,15 +166,33 @@ export function validateServerStartupEnv(config = env) {
   }
 
   if (config.SHOPIFY_WRITE_ENABLED) {
+    if (config.SHOPIFY_UPDATE_EXECUTOR_ENABLED !== true) {
+      errors.push(
+        'SHOPIFY_UPDATE_EXECUTOR_ENABLED=true is required when SHOPIFY_WRITE_ENABLED=true'
+      );
+    }
+
     if (invalidAllowlistEntries.length > 0) {
       errors.push(
         'SHOPIFY_WRITE_ORDER_ALLOWLIST must contain only numeric Shopify order IDs when SHOPIFY_WRITE_ENABLED=true'
       );
     }
 
-    if (allowlist.orderIds.length === 0) {
+    if (
+      allowlist.orderIds.length === 0 &&
+      config.SHOPIFY_WRITE_ALLOW_ALL_ORDERS !== true
+    ) {
       errors.push(
-        'SHOPIFY_WRITE_ORDER_ALLOWLIST must contain at least one numeric Shopify order ID when SHOPIFY_WRITE_ENABLED=true'
+        'SHOPIFY_WRITE_ORDER_ALLOWLIST must contain at least one numeric Shopify order ID unless SHOPIFY_WRITE_ALLOW_ALL_ORDERS=true'
+      );
+    }
+
+    if (
+      allowlist.orderIds.length > 0 &&
+      config.SHOPIFY_WRITE_ALLOW_ALL_ORDERS === true
+    ) {
+      errors.push(
+        'SHOPIFY_WRITE_ALLOW_ALL_ORDERS=true and SHOPIFY_WRITE_ORDER_ALLOWLIST are mutually exclusive'
       );
     }
   }
@@ -226,6 +244,8 @@ export function getSafeStartupConfigSummary(config = env) {
     ftpUploadTaskMaxAttempts:
       Number(config.FTP_UPLOAD_TASK_MAX_ATTEMPTS) || 0,
     shopifyWriteEnabled: Boolean(config.SHOPIFY_WRITE_ENABLED),
+    shopifyWriteAllowAllOrders:
+      config.SHOPIFY_WRITE_ALLOW_ALL_ORDERS === true,
     shopifyUpdateExecutorEnabled: Boolean(
       config.SHOPIFY_UPDATE_EXECUTOR_ENABLED
     ),

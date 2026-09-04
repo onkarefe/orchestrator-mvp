@@ -34,7 +34,7 @@ import {
   getNexoStatusSequenceIssue,
   validateNexoCallbackPayload,
 } from './NexoCallbackAdapter.js';
-import { ensureNexoShopifyUpdateTaskDryRun } from './ShopifyUpdateTaskService.js';
+import { ensureNexoShopifyUpdateTask } from './ShopifyUpdateTaskService.js';
 import { canTransition } from './statusTransition.js';
 
 const NEXO_PROVIDER = 'nexo';
@@ -70,7 +70,7 @@ const DEFAULT_RUNTIME = Object.freeze({
   updateFactoryCallbackProcessingStatus,
   updateOrderFactoryPackageNexoState,
   updateOrderFactoryState,
-  ensureNexoShopifyUpdateTaskDryRun,
+  ensureNexoShopifyUpdateTask,
   logInfo,
   logWarning,
 });
@@ -403,7 +403,7 @@ function getOrderUpdateDecision(order, targetOrderStatus) {
 }
 
 function requiresShopifyTask(status) {
-  return status === 'printed' || status === 'shipped';
+  return status === 'shipped';
 }
 
 async function logManualReview(
@@ -893,7 +893,7 @@ export async function receiveNexoCallback({
       connection
     );
     const shopifyUpdateTaskResult =
-      await runtime.ensureNexoShopifyUpdateTaskDryRun({
+      await runtime.ensureNexoShopifyUpdateTask({
         order: updatedOrder,
         orderPackage: updatedPackage,
         factoryCallback: updatedCallback,
@@ -902,7 +902,7 @@ export async function receiveNexoCallback({
       });
 
     if (requiresShopifyTask(normalized.status) && !shopifyUpdateTaskResult.task) {
-      throw new Error('Required NEXO Shopify dry-run task was not created or found');
+      throw new Error('Required NEXO Shopify task was not created or found');
     }
 
     const semanticDuplicate = Boolean(
@@ -976,7 +976,10 @@ export async function receiveNexoCallback({
         shopifyUpdateTaskId: shopifyUpdateTaskResult.task?.id ?? null,
         shopifyUpdateTaskCreated: shopifyUpdateTaskResult.created,
         shopifyUpdateTaskType: shopifyUpdateTaskResult.task?.task_type ?? null,
-        shopifyUpdateSuppressed: Boolean(shopifyUpdateTaskResult.task),
+        shopifyUpdateSuppressed: Boolean(
+          shopifyUpdateTaskResult.task?.dry_run === true ||
+            shopifyUpdateTaskResult.task?.payload_json?.writeSuppressed === true
+        ),
       },
     };
   } catch (error) {

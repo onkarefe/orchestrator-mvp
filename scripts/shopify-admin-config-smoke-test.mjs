@@ -14,6 +14,7 @@ import {
 import { SHOPIFY_UPDATE_TASK_STATUSES } from '../src/constants/statuses.js';
 import {
   buildShopifyFulfillmentPlan,
+  buildShopifyOrderFulfillmentPlan,
   buildShopifyOrderGid,
 } from '../src/services/ShopifyFulfillmentPlanner.js';
 import {
@@ -50,6 +51,7 @@ const startupBase = {
   NEXO_CALLBACK_ENABLED: false,
   SHOPIFY_UPDATE_EXECUTOR_ENABLED: false,
   SHOPIFY_WRITE_ENABLED: false,
+  SHOPIFY_WRITE_ALLOW_ALL_ORDERS: false,
   SHOPIFY_WRITE_ORDER_ALLOWLIST: [],
   SHOPIFY_WRITE_ORDER_ALLOWLIST_INVALID_ENTRIES: [],
 };
@@ -72,13 +74,14 @@ assert.throws(
     }),
   /SHOPIFY_WRITE_ORDER_ALLOWLIST/
 );
-assert.equal(
-  validateServerStartupEnv({
-    ...startupBase,
-    SHOPIFY_WRITE_ENABLED: true,
-    SHOPIFY_WRITE_ORDER_ALLOWLIST: ['7248237232408'],
-  }),
-  true
+assert.throws(
+  () =>
+    validateServerStartupEnv({
+      ...startupBase,
+      SHOPIFY_WRITE_ENABLED: true,
+      SHOPIFY_WRITE_ORDER_ALLOWLIST: ['7248237232408'],
+    }),
+  /SHOPIFY_UPDATE_EXECUTOR_ENABLED/
 );
 const enabledConfig = {
   ...startupBase,
@@ -92,6 +95,43 @@ const enabledConfig = {
 };
 
 assert.equal(validateServerStartupEnv(enabledConfig), true);
+assert.equal(
+  validateServerStartupEnv({
+    ...enabledConfig,
+    SHOPIFY_WRITE_ENABLED: true,
+    SHOPIFY_WRITE_ORDER_ALLOWLIST: ['7248237232408'],
+  }),
+  true
+);
+assert.throws(
+  () =>
+    validateServerStartupEnv({
+      ...enabledConfig,
+      SHOPIFY_WRITE_ENABLED: true,
+      SHOPIFY_WRITE_ALLOW_ALL_ORDERS: 'true',
+      SHOPIFY_WRITE_ORDER_ALLOWLIST: [],
+    }),
+  /SHOPIFY_WRITE_ORDER_ALLOWLIST/
+);
+assert.throws(
+  () =>
+    validateServerStartupEnv({
+      ...enabledConfig,
+      SHOPIFY_WRITE_ENABLED: true,
+      SHOPIFY_WRITE_ALLOW_ALL_ORDERS: true,
+      SHOPIFY_WRITE_ORDER_ALLOWLIST: ['7248237232408'],
+    }),
+  /mutually exclusive/
+);
+assert.equal(
+  validateServerStartupEnv({
+    ...enabledConfig,
+    SHOPIFY_WRITE_ENABLED: true,
+    SHOPIFY_WRITE_ALLOW_ALL_ORDERS: true,
+    SHOPIFY_WRITE_ORDER_ALLOWLIST: [],
+  }),
+  true
+);
 const safeSummaryJson = JSON.stringify(
   getSafeStartupConfigSummary(enabledConfig)
 );
@@ -219,6 +259,24 @@ assert.equal(
   false
 );
 
+const wholeOrderPlan = buildShopifyOrderFulfillmentPlan({
+  order: shopify202601Order,
+  shopifyOrderId,
+  taskPayload,
+  notifyCustomer: false,
+});
+
+assert.equal(wholeOrderPlan.ok, true);
+assert.equal(wholeOrderPlan.matchedLineItemCount, 2);
+assert.deepEqual(
+  wholeOrderPlan.fulfillmentInput.lineItemsByFulfillmentOrder[0]
+    .fulfillmentOrderLineItems,
+  [
+    { id: unrelatedFulfillmentLineItemId, quantity: 1 },
+    { id: targetFulfillmentLineItemId, quantity: 2 },
+  ]
+);
+
 const noMatchPlan = buildShopifyFulfillmentPlan({
   order: fulfillmentOrderResponse({ includeTarget: false }),
   shopifyOrderId,
@@ -325,5 +383,21 @@ const liveGate = evaluateShopifyExternalWriteGates({
 
 assert.equal(liveGate.allowed, true);
 assert.deepEqual(liveGate.reasons, []);
+
+const allowAllGate = evaluateShopifyExternalWriteGates({
+  config: {
+    SHOPIFY_UPDATE_EXECUTOR_ENABLED: true,
+    SHOPIFY_WRITE_ENABLED: true,
+    SHOPIFY_WRITE_ALLOW_ALL_ORDERS: true,
+    SHOPIFY_WRITE_ORDER_ALLOWLIST: [],
+  },
+  task: { ...claimedTask, dry_run: false },
+  payload: { ...taskPayload, dryRun: false, writeSuppressed: false },
+  workerId: 'smoke-worker',
+  fulfillmentInput: matchedPlan.fulfillmentInput,
+});
+
+assert.equal(allowAllGate.allowed, true);
+assert.deepEqual(allowAllGate.reasons, []);
 
 console.log('shopify admin config smoke ok');

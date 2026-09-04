@@ -157,6 +157,7 @@ export function buildShopifyFulfillmentPlan({
   shopifyLineItemId,
   taskPayload = {},
   notifyCustomer = false,
+  fulfillWholeOrder = false,
 } = {}) {
   const expectedOrderGid = buildShopifyOrderGid(shopifyOrderId);
   const targetLineItemId = normalizeShopifyNumericId(shopifyLineItemId);
@@ -175,7 +176,7 @@ export function buildShopifyFulfillmentPlan({
     return manualReview('shopify_fulfillment_tracking_company_too_long');
   }
 
-  if (!expectedOrderGid || !targetLineItemId) {
+  if (!expectedOrderGid || (!fulfillWholeOrder && !targetLineItemId)) {
     return manualReview('shopify_fulfillment_identity_invalid');
   }
 
@@ -206,7 +207,8 @@ export function buildShopifyFulfillmentPlan({
 
   for (const fulfillmentOrder of fulfillmentOrders.nodes) {
     if (
-      !fulfillmentOrder?.id ||
+      typeof fulfillmentOrder?.id !== 'string' ||
+      !fulfillmentOrder.id.startsWith('gid://shopify/FulfillmentOrder/') ||
       !fulfillmentOrder.lineItems ||
       !Array.isArray(fulfillmentOrder.lineItems.nodes) ||
       fulfillmentOrder.lineItems.pageInfo?.hasNextPage === true
@@ -217,13 +219,29 @@ export function buildShopifyFulfillmentPlan({
     }
 
     for (const fulfillmentOrderLineItem of fulfillmentOrder.lineItems.nodes) {
-      if (
+      if (!fulfillWholeOrder &&
         !matchesShopifyLineItem(
           fulfillmentOrderLineItem?.lineItem,
           targetLineItemId
         )
       ) {
         continue;
+      }
+
+      if (
+        fulfillWholeOrder &&
+        (typeof fulfillmentOrderLineItem?.lineItem?.id !== 'string' ||
+          !fulfillmentOrderLineItem.lineItem.id.startsWith(
+            'gid://shopify/LineItem/'
+          ))
+      ) {
+        return manualReview('shopify_fulfillment_line_item_ambiguous', {
+          matchedFulfillmentOrderCount: new Set(
+            matchedItems.map((item) => item.fulfillmentOrderId)
+          ).size,
+          matchedLineItemCount: matchedItems.length,
+          trackingNumberCount: tracking.trackingNumbers.length,
+        });
       }
 
       const fulfillmentOrderLineItemId = fulfillmentOrderLineItem?.id;
@@ -327,7 +345,16 @@ export function buildShopifyFulfillmentPlan({
   };
 }
 
+export function buildShopifyOrderFulfillmentPlan(options = {}) {
+  return buildShopifyFulfillmentPlan({
+    ...options,
+    shopifyLineItemId: null,
+    fulfillWholeOrder: true,
+  });
+}
+
 export default {
   buildShopifyFulfillmentPlan,
+  buildShopifyOrderFulfillmentPlan,
   buildShopifyOrderGid,
 };

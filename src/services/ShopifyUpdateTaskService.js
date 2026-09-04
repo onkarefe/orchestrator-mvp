@@ -266,14 +266,11 @@ export function buildNexoShopifyUpdateTaskDraft({
   orderPackage,
   factoryCallback,
   nexoCallback,
-  shopifyWriteEnabled = env.SHOPIFY_WRITE_ENABLED,
 } = {}) {
   const taskType =
-    nexoCallback?.status === 'printed'
-      ? SHOPIFY_UPDATE_TASK_TYPES.ORDER_PRODUCED
-      : nexoCallback?.status === 'shipped'
-        ? SHOPIFY_UPDATE_TASK_TYPES.ORDER_SHIPPED
-        : null;
+    nexoCallback?.status === 'shipped'
+      ? SHOPIFY_UPDATE_TASK_TYPES.ORDER_SHIPPED
+      : null;
 
   if (!taskType || !order || !orderPackage || !factoryCallback?.id) {
     return null;
@@ -299,13 +296,8 @@ export function buildNexoShopifyUpdateTaskDraft({
     orderId: order.id,
     shopifyOrderId: order.shopify_order_id ?? null,
     orderStatus: order.status,
-    dryRun: true,
-    shopifyWriteEnabled: Boolean(shopifyWriteEnabled),
-    actualShopifyWriteImplemented: false,
-    writeSuppressed: true,
-    writeSuppressedReason: shopifyWriteEnabled
-      ? 'shopify_write_not_implemented'
-      : 'shopify_write_disabled',
+    dryRun: false,
+    writeSuppressed: false,
   };
 
   if (taskType === SHOPIFY_UPDATE_TASK_TYPES.ORDER_SHIPPED) {
@@ -323,7 +315,7 @@ export function buildNexoShopifyUpdateTaskDraft({
     sourceType: 'nexo_callback',
     sourceId: String(factoryCallback.id),
     status: SHOPIFY_UPDATE_TASK_STATUSES.PENDING,
-    dryRun: true,
+    dryRun: false,
     maxAttempts: env.SHOPIFY_UPDATE_TASK_MAX_ATTEMPTS,
     payloadJson: redact(payload),
   };
@@ -363,15 +355,15 @@ function assertCompatibleNexoTask(existingTask, draft) {
   const expectedPayload = draft.payloadJson ?? {};
   const compatible = Boolean(
     existingTask &&
-      existingTask.dry_run === true &&
+      existingTask.dry_run === false &&
       existingTask.task_type === draft.taskType &&
       existingTask.source_type === draft.sourceType &&
       String(existingTask.order_id) === String(draft.orderId) &&
       String(existingTask.shopify_order_id ?? '') ===
         String(draft.shopifyOrderId ?? '') &&
       payload.source === 'nexo_callback' &&
-      payload.dryRun === true &&
-      payload.writeSuppressed === true &&
+      payload.dryRun === false &&
+      payload.writeSuppressed === false &&
       String(payload.orderFactoryPackageId) ===
         String(expectedPayload.orderFactoryPackageId) &&
       payload.reference === expectedPayload.reference &&
@@ -397,7 +389,7 @@ function assertCompatibleNexoTask(existingTask, draft) {
   return existingTask;
 }
 
-export async function ensureNexoShopifyUpdateTaskDryRun({
+export async function ensureNexoShopifyUpdateTask({
   order,
   orderPackage,
   factoryCallback,
@@ -476,7 +468,7 @@ export default {
   SHOPIFY_UPDATE_TASK_TYPES,
   buildNexoShopifyUpdateTaskDraft,
   buildShopifyUpdateTaskDraft,
-  ensureNexoShopifyUpdateTaskDryRun,
+  ensureNexoShopifyUpdateTask,
   ensureShopifyUpdateTaskDryRun,
   getShopifyUpdateTaskTypeForFactoryStatus,
 };

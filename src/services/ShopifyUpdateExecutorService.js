@@ -1,7 +1,10 @@
 import env from '../config/env.js';
 import { normalizeShopifyNumericId } from '../config/shopifyAdmin.js';
 import { SHOPIFY_UPDATE_TASK_STATUSES } from '../constants/statuses.js';
-import { findJobById } from '../models/JobModel.js';
+import { findArtifactById } from '../models/ArtifactModel.js';
+import { findFactoryUploadTaskByOrderPackageId } from '../models/FactoryUploadTaskModel.js';
+import { findOrderFactoryPackageByOrderId } from '../models/OrderFactoryPackageModel.js';
+import { findOrderById } from '../models/OrderModel.js';
 import {
   claimNextPendingShopifyUpdateTask,
   finalizeShopifyUpdateTask,
@@ -11,13 +14,17 @@ import {
 } from '../models/ShopifyUpdateTaskModel.js';
 import { redact } from '../utils/redact.js';
 import { logError, logInfo, logWarning } from './LogService.js';
-import { buildShopifyFulfillmentPlan, buildShopifyOrderGid } from './ShopifyFulfillmentPlanner.js';
+import {
+  buildShopifyOrderFulfillmentPlan,
+  buildShopifyOrderGid,
+} from './ShopifyFulfillmentPlanner.js';
 import ShopifyGraphQLClient from './ShopifyGraphQLClient.js';
 import {
   SHOPIFY_EXTERNAL_WRITE_BLOCK_REASONS,
   evaluateShopifyExternalWriteGates,
 } from './ShopifyUpdateExecutorSafety.js';
 import { SHOPIFY_UPDATE_TASK_TYPES } from './ShopifyUpdateTaskService.js';
+import { buildNexoShopifyTaskIdempotencyKey } from './NexoCallbackAdapter.js';
 
 export const SHOPIFY_ORDER_FULFILLMENT_QUERY = `
   query ShopifyOrderFulfillmentPlan($orderId: ID!) {
@@ -73,6 +80,24 @@ class ShopifyUpdateExecutorError extends Error {
   }
 }
 
+function executorRuntime(overrides = {}) {
+  return {
+    claimNextPendingShopifyUpdateTask,
+    finalizeShopifyUpdateTask,
+    findArtifactById,
+    findFactoryUploadTaskByOrderPackageId,
+    findOrderById,
+    findOrderFactoryPackageByOrderId,
+    findOwnedShopifyUpdateTaskClaim,
+    releaseStaleShopifyUpdateTaskClaims,
+    requeueShopifyUpdateTask,
+    logError,
+    logInfo,
+    logWarning,
+    ...overrides,
+  };
+}
+
 function payloadObject(task) {
   const payload = task?.payload_json;
 
@@ -98,21 +123,26 @@ function getPayloadValue(payload, camelCaseName, snakeCaseName) {
   return payload[camelCaseName] ?? payload[snakeCaseName] ?? null;
 }
 
-function taskIdentityIssue(task, payload, job) {
+function taskIdentityIssue(task, payload, context = {}) {
+  const { order, orderPackage, artifact, factoryUploadTask } = context;
   const taskOrderId = scalar(task.order_id);
   const taskShopifyOrderId = normalizeShopifyNumericId(task.shopify_order_id);
   const payloadOrderId = scalar(getPayloadValue(payload, 'orderId', 'order_id'));
   const payloadShopifyOrderId = normalizeShopifyNumericId(
     getPayloadValue(payload, 'shopifyOrderId', 'shopify_order_id')
   );
-  const payloadJobId = normalizeShopifyNumericId(
-    getPayloadValue(payload, 'jobId', 'job_id')
+  const payloadPackageId = scalar(
+    getPayloadValue(
+      payload,
+      'orderFactoryPackageId',
+      'order_factory_package_id'
+    )
   );
   const payloadTaskType = scalar(
     getPayloadValue(payload, 'taskType', 'task_type')
   );
 
-  if (!taskOrderId || !taskShopifyOrderId || !payloadJobId) {
+  if (!taskOrderId || !taskShopifyOrderId || !payloadPackageId) {
     return 'shopify_update_task_identity_missing';
   }
 
@@ -128,38 +158,133 @@ function taskIdentityIssue(task, payload, job) {
     return 'shopify_update_task_shopify_order_id_mismatch';
   }
 
-  if (!job || String(job.id) !== payloadJobId) {
-    return 'shopify_update_task_job_not_found';
+  if (
+    task.job_id !== undefined &&
+    task.job_id !== null
+  ) {
+    return 'shopify_update_task_legacy_job_ownership_not_allowed';
+  }
+
+  if (getPayloadValue(payload, 'jobId', 'job_id') !== null) {
+    return 'shopify_update_task_legacy_job_ownership_not_allowed';
   }
 
   if (
-    String(job.order_id ?? '') !== taskOrderId ||
-    normalizeShopifyNumericId(job.shopify_order_id) !== taskShopifyOrderId
+    !order ||
+    String(order.id) !== taskOrderId ||
+    normalizeShopifyNumericId(order.shopify_order_id) !== taskShopifyOrderId
   ) {
-    return 'shopify_update_task_job_order_relationship_mismatch';
-  }
-
-  if (!normalizeShopifyNumericId(job.shopify_line_item_id)) {
-    return 'shopify_update_task_job_line_item_id_missing';
+    return 'shopify_update_task_order_not_found_or_mismatched';
   }
 
   if (
-    task.source_type === 'nexo_callback' &&
-    (!payload.factoryReference ||
-      payload.factoryReference !== job.factory_reference ||
-      payload.reference !== job.factory_reference)
+    !orderPackage ||
+    String(orderPackage.id) !== payloadPackageId ||
+    String(orderPackage.order_id) !== taskOrderId ||
+    normalizeShopifyNumericId(orderPackage.shopify_order_id) !==
+      taskShopifyOrderId
   ) {
-    return 'shopify_update_task_factory_reference_mismatch';
+    return 'shopify_update_task_order_package_mismatch';
+  }
+
+  if (
+    !artifact ||
+    String(artifact.id) !== String(orderPackage.artifact_id) ||
+    String(artifact.order_id) !== taskOrderId ||
+    artifact.job_id !== null ||
+    artifact.type !== 'factory_package' ||
+    artifact.status !== 'available' ||
+    artifact.validation_status !== 'passed'
+  ) {
+    return 'shopify_update_task_package_artifact_invalid';
+  }
+
+  if (
+    !factoryUploadTask ||
+    factoryUploadTask.status !== 'uploaded' ||
+    String(factoryUploadTask.order_id) !== taskOrderId ||
+    String(factoryUploadTask.artifact_id) !== String(artifact.id) ||
+    String(factoryUploadTask.order_factory_package_id) !==
+      String(orderPackage.id) ||
+    normalizeShopifyNumericId(factoryUploadTask.shopify_order_id) !==
+      taskShopifyOrderId ||
+    factoryUploadTask.factory_reference !== orderPackage.order_number ||
+    factoryUploadTask.job_id !== null
+  ) {
+    return 'shopify_update_task_package_not_validly_dispatched';
+  }
+
+  if (
+    task.source_type !== 'nexo_callback' ||
+    payload.source !== 'nexo_callback' ||
+    payload.nexoStatus !== 'shipped' ||
+    order.status !== 'shipped' ||
+    order.factory_status !== 'shipped' ||
+    orderPackage.status !== 'ready' ||
+    orderPackage.factory_status !== 'shipped'
+  ) {
+    return 'shopify_update_task_package_not_shipped';
+  }
+
+  const nexoExternalId = scalar(payload.nexoExternalId);
+
+  if (
+    !nexoExternalId ||
+    String(order.factory_order_id ?? '') !== nexoExternalId ||
+    String(orderPackage.nexo_order_id ?? '') !== nexoExternalId ||
+    payload.reference !== orderPackage.order_number ||
+    payload.factoryReference !== orderPackage.order_number
+  ) {
+    return 'shopify_update_task_factory_identity_mismatch';
+  }
+
+  const expectedIdempotencyKey = buildNexoShopifyTaskIdempotencyKey({
+    orderFactoryPackageId: orderPackage.id,
+    reference: orderPackage.order_number,
+    taskType: SHOPIFY_UPDATE_TASK_TYPES.ORDER_SHIPPED,
+  });
+
+  if (
+    !expectedIdempotencyKey ||
+    task.idempotency_key !== expectedIdempotencyKey ||
+    payload.idempotencyKey !== expectedIdempotencyKey
+  ) {
+    return 'shopify_update_task_idempotency_identity_mismatch';
   }
 
   return null;
 }
 
+async function loadOrderLevelTaskContext(task, runtime) {
+  const order = await runtime.findOrderById(task.order_id);
+  const orderPackage = order
+    ? await runtime.findOrderFactoryPackageByOrderId(order.id)
+    : null;
+  const artifact = orderPackage
+    ? await runtime.findArtifactById(orderPackage.artifact_id)
+    : null;
+  const factoryUploadTask = orderPackage
+    ? await runtime.findFactoryUploadTaskByOrderPackageId(orderPackage.id)
+    : null;
+
+  return { order, orderPackage, artifact, factoryUploadTask };
+}
+
 function baseResult(task) {
+  const payload = payloadObject(task);
+
   return {
     taskId: task.id,
     taskType: task.task_type,
+    orderId: task.order_id,
     shopifyOrderId: task.shopify_order_id,
+    orderFactoryPackageId: payload
+      ? getPayloadValue(
+          payload,
+          'orderFactoryPackageId',
+          'order_factory_package_id'
+        )
+      : null,
     attemptCount: task.attempt_count,
     matchedFulfillmentOrderCount: 0,
     matchedLineItemCount: 0,
@@ -219,8 +344,9 @@ async function finalizeOwnedTask({
   result,
   lastError = null,
   externalId = null,
+  runtime,
 }) {
-  const finalization = await finalizeShopifyUpdateTask(task.id, {
+  const finalization = await runtime.finalizeShopifyUpdateTask(task.id, {
     status,
     resultJson: redact(result),
     lastError,
@@ -237,7 +363,13 @@ async function finalizeOwnedTask({
   return finalization.task;
 }
 
-async function finalizeManualReview(task, workerId, errorCode, details = {}) {
+async function finalizeManualReview(
+  task,
+  workerId,
+  errorCode,
+  details = {},
+  runtime
+) {
   const result = {
     ...baseResult(task),
     ...details,
@@ -252,9 +384,10 @@ async function finalizeManualReview(task, workerId, errorCode, details = {}) {
     status: SHOPIFY_UPDATE_TASK_STATUSES.MANUAL_REVIEW,
     result,
     lastError: errorCode,
+    runtime,
   });
 
-  await logWarning({
+  await runtime.logWarning({
     scopeType: task.order_id ? 'order' : 'system',
     orderId: task.order_id,
     step: 'shopify_update_executor.manual_review',
@@ -262,6 +395,8 @@ async function finalizeManualReview(task, workerId, errorCode, details = {}) {
     detailsJson: {
       taskId: task.id,
       taskType: task.task_type,
+      orderFactoryPackageId: baseResult(task).orderFactoryPackageId,
+      attemptCount: task.attempt_count,
       error: errorCode,
     },
   });
@@ -273,10 +408,10 @@ async function finalizeManualReview(task, workerId, errorCode, details = {}) {
   };
 }
 
-async function processOrderProduced(task, workerId) {
+async function processOrderProduced(task, workerId, runtime) {
   const result = {
     ...baseResult(task),
-    plannedAction: 'order_produced_no_external_mutation',
+    plannedAction: null,
     writeSuppressed: true,
     writeSuppressedReason: 'order_produced_mutation_not_implemented',
     notifyCustomer: false,
@@ -284,13 +419,15 @@ async function processOrderProduced(task, workerId) {
   const finalTask = await finalizeOwnedTask({
     task,
     workerId,
-    status: SHOPIFY_UPDATE_TASK_STATUSES.COMPLETED,
+    status: SHOPIFY_UPDATE_TASK_STATUSES.SKIPPED,
     result,
+    lastError: 'order_produced_mutation_not_implemented',
+    runtime,
   });
 
   return {
     task: finalTask,
-    disposition: 'planned',
+    disposition: 'skipped',
     result,
   };
 }
@@ -316,6 +453,7 @@ async function processOrderShipped({
   workerId,
   config,
   graphqlClient,
+  runtime,
 }) {
   const payload = payloadObject(task);
 
@@ -323,18 +461,17 @@ async function processOrderShipped({
     return finalizeManualReview(
       task,
       workerId,
-      'shopify_update_task_payload_invalid'
+      'shopify_update_task_payload_invalid',
+      {},
+      runtime
     );
   }
 
-  const payloadJobId = normalizeShopifyNumericId(
-    getPayloadValue(payload, 'jobId', 'job_id')
-  );
-  const job = payloadJobId ? await findJobById(payloadJobId) : null;
-  const identityIssue = taskIdentityIssue(task, payload, job);
+  const context = await loadOrderLevelTaskContext(task, runtime);
+  const identityIssue = taskIdentityIssue(task, payload, context);
 
   if (identityIssue) {
-    return finalizeManualReview(task, workerId, identityIssue);
+    return finalizeManualReview(task, workerId, identityIssue, {}, runtime);
   }
 
   const orderGid = buildShopifyOrderGid(task.shopify_order_id);
@@ -350,10 +487,9 @@ async function processOrderShipped({
     });
   }
 
-  const plan = buildShopifyFulfillmentPlan({
+  const plan = buildShopifyOrderFulfillmentPlan({
     order: orderResult.data?.order,
     shopifyOrderId: task.shopify_order_id,
-    shopifyLineItemId: job.shopify_line_item_id,
     taskPayload: payload,
     notifyCustomer: config.SHOPIFY_FULFILLMENT_NOTIFY_CUSTOMER,
   });
@@ -366,7 +502,13 @@ async function processOrderShipped({
   };
 
   if (!plan.ok) {
-    return finalizeManualReview(task, workerId, plan.error, planResult);
+    return finalizeManualReview(
+      task,
+      workerId,
+      plan.error,
+      planResult,
+      runtime
+    );
   }
 
   if (plan.disposition === 'skipped') {
@@ -382,6 +524,7 @@ async function processOrderShipped({
       workerId,
       status: SHOPIFY_UPDATE_TASK_STATUSES.SKIPPED,
       result,
+      runtime,
     });
 
     return {
@@ -391,7 +534,10 @@ async function processOrderShipped({
     };
   }
 
-  const ownedTask = await findOwnedShopifyUpdateTaskClaim(task.id, workerId);
+  const ownedTask = await runtime.findOwnedShopifyUpdateTaskClaim(
+    task.id,
+    workerId
+  );
 
   if (!ownedTask) {
     throw new ShopifyUpdateExecutorError(
@@ -405,24 +551,35 @@ async function processOrderShipped({
     return finalizeManualReview(
       ownedTask,
       workerId,
-      'shopify_update_task_payload_invalid'
+      'shopify_update_task_payload_invalid',
+      {},
+      runtime
     );
   }
 
-  const refreshedIdentityIssue = taskIdentityIssue(ownedTask, ownedPayload, job);
+  const refreshedContext = await loadOrderLevelTaskContext(
+    ownedTask,
+    runtime
+  );
+  const refreshedIdentityIssue = taskIdentityIssue(
+    ownedTask,
+    ownedPayload,
+    refreshedContext
+  );
 
   if (refreshedIdentityIssue) {
     return finalizeManualReview(
       ownedTask,
       workerId,
-      refreshedIdentityIssue
+      refreshedIdentityIssue,
+      {},
+      runtime
     );
   }
 
-  const refreshedPlan = buildShopifyFulfillmentPlan({
+  const refreshedPlan = buildShopifyOrderFulfillmentPlan({
     order: orderResult.data?.order,
     shopifyOrderId: ownedTask.shopify_order_id,
-    shopifyLineItemId: job.shopify_line_item_id,
     taskPayload: ownedPayload,
     notifyCustomer: config.SHOPIFY_FULFILLMENT_NOTIFY_CUSTOMER,
   });
@@ -431,7 +588,9 @@ async function processOrderShipped({
     return finalizeManualReview(
       ownedTask,
       workerId,
-      refreshedPlan.error ?? 'shopify_fulfillment_plan_changed_before_write'
+      refreshedPlan.error ?? 'shopify_fulfillment_plan_changed_before_write',
+      {},
+      runtime
     );
   }
 
@@ -483,7 +642,8 @@ async function processOrderShipped({
         ownedTask,
         workerId,
         unsafeGateReasons[0],
-        result
+        result,
+        runtime
       );
     }
 
@@ -499,6 +659,7 @@ async function processOrderShipped({
       status,
       result,
       lastError: allowlistOnlyBlock ? gate.primaryReason : null,
+      runtime,
     });
 
     return {
@@ -523,7 +684,8 @@ async function processOrderShipped({
         {
           ...result,
           mutationResult: safeGraphqlResultSummary(mutationResult),
-        }
+        },
+        runtime
       );
     }
 
@@ -544,7 +706,8 @@ async function processOrderShipped({
       {
         ...result,
         mutationResult: safeGraphqlResultSummary(mutationResult),
-      }
+      },
+      runtime
     );
   }
 
@@ -564,6 +727,7 @@ async function processOrderShipped({
     status: SHOPIFY_UPDATE_TASK_STATUSES.COMPLETED,
     result: completedResult,
     externalId: fulfillment.id,
+    runtime,
   });
 
   return {
@@ -578,7 +742,9 @@ export async function processClaimedShopifyUpdateTask({
   workerId,
   config = env,
   graphqlClient,
+  runtime: runtimeOverrides = {},
 }) {
+  const runtime = executorRuntime(runtimeOverrides);
   if (
     !task ||
     task.status !== SHOPIFY_UPDATE_TASK_STATUSES.PROCESSING ||
@@ -590,7 +756,7 @@ export async function processClaimedShopifyUpdateTask({
   }
 
   if (task.task_type === SHOPIFY_UPDATE_TASK_TYPES.ORDER_PRODUCED) {
-    return processOrderProduced(task, workerId);
+    return processOrderProduced(task, workerId, runtime);
   }
 
   if (task.task_type === SHOPIFY_UPDATE_TASK_TYPES.ORDER_SHIPPED) {
@@ -599,17 +765,26 @@ export async function processClaimedShopifyUpdateTask({
       workerId,
       config,
       graphqlClient,
+      runtime,
     });
   }
 
   return finalizeManualReview(
     task,
     workerId,
-    'shopify_update_task_type_not_supported'
+    'shopify_update_task_type_not_supported',
+    {},
+    runtime
   );
 }
 
-async function handleClaimedTaskFailure({ task, workerId, config, error }) {
+async function handleClaimedTaskFailure({
+  task,
+  workerId,
+  config,
+  error,
+  runtime,
+}) {
   const code =
     typeof error?.code === 'string'
       ? error.code
@@ -628,7 +803,7 @@ async function handleClaimedTaskFailure({ task, workerId, config, error }) {
   };
 
   if (canRetry) {
-    const requeued = await requeueShopifyUpdateTask(task.id, {
+    const requeued = await runtime.requeueShopifyUpdateTask(task.id, {
       resultJson: redact(result),
       lastError: code,
       workerId,
@@ -652,9 +827,10 @@ async function handleClaimedTaskFailure({ task, workerId, config, error }) {
     status: SHOPIFY_UPDATE_TASK_STATUSES.FAILED,
     result,
     lastError: code,
+    runtime,
   });
 
-  await logError({
+  await runtime.logError({
     scopeType: task.order_id ? 'order' : 'system',
     orderId: task.order_id,
     step: 'shopify_update_executor.failed',
@@ -662,6 +838,8 @@ async function handleClaimedTaskFailure({ task, workerId, config, error }) {
     detailsJson: {
       taskId: task.id,
       taskType: task.task_type,
+      orderFactoryPackageId: baseResult(task).orderFactoryPackageId,
+      attemptCount: task.attempt_count,
       error: code,
       retryable,
     },
@@ -678,16 +856,22 @@ export async function runShopifyUpdateExecutorOnce({
   config = env,
   workerId,
   graphqlClient = null,
+  runtime: runtimeOverrides = {},
 } = {}) {
-  if (!config.SHOPIFY_UPDATE_EXECUTOR_ENABLED) {
+  if (
+    config.SHOPIFY_UPDATE_EXECUTOR_ENABLED !== true ||
+    config.SHOPIFY_WRITE_ENABLED !== true
+  ) {
     return {
-      enabled: false,
+      enabled: config.SHOPIFY_UPDATE_EXECUTOR_ENABLED === true,
+      writeEnabled: config.SHOPIFY_WRITE_ENABLED === true,
       claimed: 0,
       processed: 0,
       results: [],
     };
   }
 
+  const runtime = executorRuntime(runtimeOverrides);
   const normalizedWorkerId = String(workerId ?? '').trim().slice(0, 191);
 
   if (!normalizedWorkerId) {
@@ -705,7 +889,7 @@ export async function runShopifyUpdateExecutorOnce({
       ? parsedMaxAttempts
       : 3;
   const client = graphqlClient ?? new ShopifyGraphQLClient({ config });
-  const staleClaims = await releaseStaleShopifyUpdateTaskClaims({
+  const staleClaims = await runtime.releaseStaleShopifyUpdateTaskClaims({
     staleLockMinutes: config.PROCESSING_STALE_LOCK_MINUTES,
     maxAttempts,
   });
@@ -714,7 +898,7 @@ export async function runShopifyUpdateExecutorOnce({
   let claimed = 0;
 
   for (let index = 0; index < batchSize; index += 1) {
-    const task = await claimNextPendingShopifyUpdateTask({
+    const task = await runtime.claimNextPendingShopifyUpdateTask({
       workerId: normalizedWorkerId,
       maxAttempts,
       excludeIds: claimedTaskIds,
@@ -733,6 +917,7 @@ export async function runShopifyUpdateExecutorOnce({
         workerId: normalizedWorkerId,
         config,
         graphqlClient: client,
+        runtime,
       });
 
       results.push({
@@ -740,7 +925,7 @@ export async function runShopifyUpdateExecutorOnce({
         disposition: outcome.disposition,
       });
 
-      await logInfo({
+      await runtime.logInfo({
         scopeType: task.order_id ? 'order' : 'system',
         orderId: task.order_id,
         step: 'shopify_update_executor.processed',
@@ -748,6 +933,9 @@ export async function runShopifyUpdateExecutorOnce({
         detailsJson: {
           taskId: task.id,
           taskType: task.task_type,
+          orderFactoryPackageId:
+            outcome.result?.orderFactoryPackageId ?? null,
+          attemptCount: task.attempt_count,
           disposition: outcome.disposition,
           externalWritePerformed:
             outcome.result?.externalWritePerformed === true,
@@ -759,6 +947,7 @@ export async function runShopifyUpdateExecutorOnce({
         workerId: normalizedWorkerId,
         config,
         error,
+        runtime,
       });
 
       results.push({
@@ -770,6 +959,7 @@ export async function runShopifyUpdateExecutorOnce({
 
   return {
     enabled: true,
+    writeEnabled: true,
     claimed,
     processed: results.length,
     staleClaims,

@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 
 import { FACTORY_CALLBACK_PROCESSING_STATUSES } from '../src/constants/statuses.js';
 import { receiveNexoCallback } from '../src/services/NexoCallbackService.js';
-import { ensureNexoShopifyUpdateTaskDryRun } from '../src/services/ShopifyUpdateTaskService.js';
+import { ensureNexoShopifyUpdateTask } from '../src/services/ShopifyUpdateTaskService.js';
 
 const config = {
   NEXO_CALLBACK_AUTH_ENABLED: true,
@@ -136,7 +136,7 @@ function createHarness() {
         source_id: draft.sourceId,
         status: draft.status,
         payload_json: draft.payloadJson,
-        dry_run: true,
+        dry_run: draft.dryRun,
       };
       state.shopifyTasks.push(task);
       return task;
@@ -239,8 +239,8 @@ function createHarness() {
               callback.processing_status
             )
         ) ?? null,
-    ensureNexoShopifyUpdateTaskDryRun: async (options) =>
-      ensureNexoShopifyUpdateTaskDryRun({
+    ensureNexoShopifyUpdateTask: async (options) =>
+      ensureNexoShopifyUpdateTask({
         ...options,
         runtime: taskRuntime,
       }),
@@ -341,16 +341,7 @@ await receive(
 await receive(sequenceHarness, payload({ status: 'printed', sequence: 3 }));
 assert.equal(sequenceHarness.state.orderPackage.factory_status, 'printed');
 assert.equal(sequenceHarness.state.order.status, 'production_completed');
-assert.equal(sequenceHarness.state.shopifyTasks.length, 1);
-assert.equal(
-  sequenceHarness.state.shopifyTasks[0].task_type,
-  'order_produced'
-);
-assert.equal(
-  sequenceHarness.state.shopifyTasks[0].payload_json.orderFactoryPackageId,
-  sequenceHarness.state.orderPackage.id
-);
-assert.equal('jobId' in sequenceHarness.state.shopifyTasks[0].payload_json, false);
+assert.equal(sequenceHarness.state.shopifyTasks.length, 0);
 
 const backward = await receive(
   sequenceHarness,
@@ -381,6 +372,18 @@ assert.equal(
   ).length,
   1
 );
+assert.equal(sequenceHarness.state.shopifyTasks[0].dry_run, false);
+assert.equal(sequenceHarness.state.shopifyTasks[0].payload_json.dryRun, false);
+assert.equal(
+  sequenceHarness.state.shopifyTasks[0].payload_json.writeSuppressed,
+  false
+);
+assert.equal(
+  sequenceHarness.state.shopifyTasks[0].payload_json.orderFactoryPackageId,
+  sequenceHarness.state.orderPackage.id
+);
+assert.equal('jobId' in sequenceHarness.state.shopifyTasks[0].payload_json, false);
+assert.equal(shipped.body.shopifyUpdateSuppressed, false);
 
 const shippedDuplicate = await receive(
   sequenceHarness,

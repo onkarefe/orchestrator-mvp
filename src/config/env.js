@@ -23,6 +23,10 @@ function booleanFromEnv(name, defaultValue) {
   return defaultValue;
 }
 
+function exactTrueBooleanFromEnv(name) {
+  return process.env[name] === 'true';
+}
+
 function integerFromEnv(name, defaultValue, { min = 0 } = {}) {
   const value = process.env[name];
 
@@ -177,6 +181,9 @@ const env = {
   SHOPIFY_CLIENT_ID: process.env.SHOPIFY_CLIENT_ID ?? '',
   SHOPIFY_CLIENT_SECRET: process.env.SHOPIFY_CLIENT_SECRET ?? '',
   SHOPIFY_WRITE_ENABLED: booleanFromEnv('SHOPIFY_WRITE_ENABLED', false),
+  SHOPIFY_WRITE_ALLOW_ALL_ORDERS: exactTrueBooleanFromEnv(
+    'SHOPIFY_WRITE_ALLOW_ALL_ORDERS'
+  ),
   SHOPIFY_WRITE_ORDER_ALLOWLIST: shopifyWriteOrderAllowlist.orderIds,
   SHOPIFY_WRITE_ORDER_ALLOWLIST_INVALID_ENTRIES:
     shopifyWriteOrderAllowlist.invalidEntries,
@@ -195,6 +202,11 @@ const env = {
   SHOPIFY_UPDATE_TASK_MAX_ATTEMPTS: positiveIntegerFromEnv(
     'SHOPIFY_UPDATE_TASK_MAX_ATTEMPTS',
     3
+  ),
+  SHOPIFY_UPDATE_POLL_INTERVAL_MS: integerFromEnv(
+    'SHOPIFY_UPDATE_POLL_INTERVAL_MS',
+    3000,
+    { min: 1000 }
   ),
   FACTORY_CALLBACK_ENABLED: booleanFromEnv('FACTORY_CALLBACK_ENABLED', true),
   FACTORY_CALLBACK_AUTH_ENABLED: booleanFromEnv(

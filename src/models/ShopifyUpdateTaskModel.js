@@ -194,7 +194,7 @@ export async function claimNextPendingShopifyUpdateTask(options = {}) {
     throw new Error('Shopify update executor worker ID is required');
   }
 
-  const connection = await pool.getConnection();
+  const connection = await (options.db ?? pool).getConnection();
 
   try {
     await connection.beginTransaction();

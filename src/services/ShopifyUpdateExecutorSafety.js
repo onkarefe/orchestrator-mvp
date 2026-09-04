@@ -92,6 +92,8 @@ export function evaluateShopifyExternalWriteGates({
   const invalidAllowlistEntryCount =
     allowlist.invalidEntries.length +
     (config?.SHOPIFY_WRITE_ORDER_ALLOWLIST_INVALID_ENTRIES?.length ?? 0);
+  const allowAllOrders =
+    config?.SHOPIFY_WRITE_ALLOW_ALL_ORDERS === true;
 
   if (!config?.SHOPIFY_UPDATE_EXECUTOR_ENABLED) {
     reasons.push(SHOPIFY_EXTERNAL_WRITE_BLOCK_REASONS.EXECUTOR_DISABLED);
@@ -146,6 +148,7 @@ export function evaluateShopifyExternalWriteGates({
   if (!normalizedOrderId) {
     reasons.push(SHOPIFY_EXTERNAL_WRITE_BLOCK_REASONS.INVALID_ORDER_ID);
   } else if (
+    !allowAllOrders &&
     !isShopifyOrderAllowlisted(
       normalizedOrderId,
       config?.SHOPIFY_WRITE_ORDER_ALLOWLIST
