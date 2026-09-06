@@ -130,49 +130,16 @@ export async function findFactoryUploadTaskByArtifactId(
 
 export async function findFactoryUploadTaskByOrderPackageId(
   orderFactoryPackageId,
-  db = pool,
-  { forUpdate = false } = {}
+  db = pool
 ) {
   const executor = getExecutor(db);
   const [rows] = await executor.execute(
     `SELECT * FROM factory_upload_tasks
-    WHERE order_factory_package_id = ? LIMIT 1${forUpdate ? ' FOR UPDATE' : ''}`,
+    WHERE order_factory_package_id = ? LIMIT 1`,
     [orderFactoryPackageId]
   );
 
   return normalizeFactoryUploadTask(rows[0]);
-}
-
-export async function blockFactoryUploadTaskForLifecycle(
-  orderFactoryPackageId,
-  reason,
-  db = pool
-) {
-  if (!orderFactoryPackageId) {
-    return 0;
-  }
-
-  const executor = getExecutor(db);
-  const [result] = await executor.execute(
-    `UPDATE factory_upload_tasks
-    SET status = ?,
-      suppressed_reason = ?,
-      last_error = NULL,
-      locked_at = NULL,
-      locked_by = NULL
-    WHERE order_factory_package_id = ?
-      AND status IN (?, ?, ?)`,
-    [
-      FACTORY_UPLOAD_TASK_STATUSES.SKIPPED,
-      reason,
-      orderFactoryPackageId,
-      FACTORY_UPLOAD_TASK_STATUSES.PENDING,
-      FACTORY_UPLOAD_TASK_STATUSES.FAILED,
-      FACTORY_UPLOAD_TASK_STATUSES.SUPPRESSED,
-    ]
-  );
-
-  return result.affectedRows;
 }
 
 export async function listFactoryUploadTasks({
@@ -588,7 +555,6 @@ export async function releaseStaleFactoryUploadTaskClaims({
 }
 
 export default {
-  blockFactoryUploadTaskForLifecycle,
   claimFactoryUploadTaskById,
   claimNextFactoryUploadTask,
   createFactoryUploadTask,

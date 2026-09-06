@@ -12,11 +12,8 @@ import {
   processNextFactoryUploadTask,
   uploadFile,
 } from '../src/services/FactoryUploadService.js';
-import {
-  applyShopifyLifecycleEvent,
-  SHOPIFY_LIFECYCLE_STATES,
-} from '../src/services/ShopifyLifecycleService.js';
 import { buildOrderMonitoring } from '../src/services/OrderMonitoringService.js';
+import { evaluateFactoryDispatchGate } from '../src/services/FactoryDispatchGateService.js';
 import {
   readiness,
   setServiceShuttingDown,
@@ -37,6 +34,29 @@ assert.equal(
   validateWallpaperSkuStartupEnv({ WALLPAPER_SKUS: ['20-140.1-3'] }),
   true
 );
+
+const acceptedPaidOrderGate = evaluateFactoryDispatchGate({
+  order: {
+    id: 1,
+    shopify_order_id: '9001',
+    raw_payload_json: {
+      line_items: [{ id: 101 }],
+      cancelled_at: '2026-09-07T12:00:00Z',
+      financial_status: 'refunded',
+    },
+  },
+  lineItems: [
+    {
+      order_id: 1,
+      shopify_order_id: '9001',
+      shopify_line_item_id: '101',
+      source_position: 0,
+      classification: 'WALLPAPER',
+      routing_state: 'production_ready',
+    },
+  ],
+});
+assert.deepEqual(acceptedPaidOrderGate, { allowed: true, reason: null });
 
 const ftpConfig = {
   FTP_UPLOAD_ENABLED: true,
@@ -191,90 +211,13 @@ try {
   await fs.rm(ftpCrashRoot, { recursive: true, force: true });
 }
 
-function lifecycleRuntime({ uploadStatus }) {
-  const state = { blockedJobs: 0, blockedTasks: 0, updated: null };
-  const order = {
-    id: 1,
-    shopify_order_id: '9001',
-    status: 'queued',
-    raw_payload_json: {
-      line_items: [{ id: 101 }],
-      shipping_address: { address1: 'Before' },
-      shipping_lines: [],
-      phone: null,
-    },
-  };
-  const orderPackage = { id: 31, status: 'ready' };
-  const uploadTask = {
-    id: 41,
-    status: uploadStatus,
-    uploaded_files_json: [],
-  };
-  const runtime = {
-    getConnection: async () => ({
-      async beginTransaction() {},
-      async commit() {},
-      async rollback() {},
-      release() {},
-    }),
-    findOrderByShopifyOrderIdForUpdate: async () => order,
-    findOrderFactoryPackageByOrderId: async () => orderPackage,
-    findFactoryUploadTaskByOrderPackageId: async () => uploadTask,
-    updateOrderLifecycleState: async (id, data) => {
-      state.updated = data;
-      return { ...order, ...data, raw_payload_json: data.rawPayloadJson };
-    },
-    blockOrderJobsForLifecycle: async () => {
-      state.blockedJobs += 1;
-    },
-    blockFactoryUploadTaskForLifecycle: async () => {
-      state.blockedTasks += 1;
-    },
-    logInfo: async () => null,
-    logWarning: async () => null,
-  };
-
-  return { order, orderPackage, uploadTask, runtime, state };
-}
-
-const preDispatch = lifecycleRuntime({ uploadStatus: 'pending' });
-const preDispatchResult = await applyShopifyLifecycleEvent({
-  topic: 'orders/cancelled',
-  payload: { id: '9001', cancelled_at: '2026-09-06T12:00:00Z' },
-  webhookId: 81,
-  runtime: preDispatch.runtime,
-});
-assert.equal(preDispatchResult.disposition, 'factory_dispatch_blocked');
-assert.equal(
-  preDispatchResult.lifecycle.state,
-  SHOPIFY_LIFECYCLE_STATES.BLOCKED_BEFORE_DISPATCH
-);
-assert.equal(preDispatch.state.blockedJobs, 1);
-assert.equal(preDispatch.state.blockedTasks, 1);
-
-const postDispatch = lifecycleRuntime({ uploadStatus: 'uploaded' });
-const postDispatchResult = await applyShopifyLifecycleEvent({
-  topic: 'refunds/create',
-  payload: { order_id: '9001' },
-  webhookId: 82,
-  runtime: postDispatch.runtime,
-});
-assert.equal(postDispatchResult.disposition, 'factory_attention_required');
-assert.equal(
-  postDispatchResult.lifecycle.state,
-  SHOPIFY_LIFECYCLE_STATES.ATTENTION_AFTER_DISPATCH
-);
-assert.equal(postDispatch.state.blockedJobs, 0);
-assert.equal(postDispatch.state.blockedTasks, 0);
-assert.equal(postDispatch.uploadTask.status, 'uploaded');
-
 const monitoring = buildOrderMonitoring({
   order: {
-    ...postDispatch.order,
-    raw_payload_json: {
-      ...postDispatch.order.raw_payload_json,
-      orchestrator_lifecycle: postDispatchResult.lifecycle,
-    },
+    id: 1,
+    shopify_order_id: '9001',
+    status: 'shipped',
+    factory_status: 'shipped',
+    raw_payload_json: { line_items: [{ id: 101 }] },
   },
   lineItems: [{ classification: 'WALLPAPER', routing_state: 'production_ready' }],
   jobs: [{ status: 'completed' }],
@@ -282,11 +225,6 @@ const monitoring = buildOrderMonitoring({
   uploadTask: { status: 'uploaded' },
   shopifyUpdateTasks: [{ status: 'failed', last_error: 'write failed' }],
 });
-assert.ok(
-  monitoring.anomalies.some(
-    (item) => item.code === 'shopify_lifecycle_conflict'
-  )
-);
 assert.ok(
   monitoring.anomalies.some(
     (item) => item.code === 'shopify_fulfillment_failed'

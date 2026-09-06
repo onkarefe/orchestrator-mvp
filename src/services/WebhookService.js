@@ -11,7 +11,6 @@ import {
 import { WEBHOOK_PROCESSING_STATUSES } from '../constants/statuses.js';
 import { logError, logInfo } from './LogService.js';
 import { createOrderAndJobsFromShopifyPayload } from './OrderService.js';
-import { applyShopifyLifecycleEvent } from './ShopifyLifecycleService.js';
 
 export async function recordWebhook(data) {
   const webhook = await createWebhook({
@@ -145,23 +144,6 @@ export async function processWebhookOrder(webhookId) {
   };
 }
 
-export async function processShopifyLifecycleWebhook(webhookId) {
-  const webhook = await findWebhookById(webhookId);
-
-  if (!webhook) {
-    throw new Error('Webhook not found');
-  }
-
-  const result = await applyShopifyLifecycleEvent({
-    topic: webhook.topic,
-    payload: webhook.raw_payload_json,
-    webhookId: webhook.id,
-  });
-  const processedWebhook = await markWebhookProcessed(webhookId);
-
-  return { webhook: processedWebhook, ...result };
-}
-
 export function getWebhookByDeliveryId(deliveryId) {
   return findWebhookByDeliveryId(deliveryId);
 }
@@ -181,7 +163,6 @@ export default {
   markWebhookFailed,
   markWebhookDuplicate,
   processWebhookOrder,
-  processShopifyLifecycleWebhook,
   getWebhookByDeliveryId,
   getWebhook,
   getWebhooks,

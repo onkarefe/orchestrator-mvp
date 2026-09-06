@@ -28,7 +28,6 @@ export async function listOrdersMissingFactoryPackage({
   const sql = `SELECT o.id AS order_id
     FROM orders o
     WHERE o.shopify_order_id IS NOT NULL
-      AND JSON_EXTRACT(o.raw_payload_json, '$.orchestrator_lifecycle.state') IS NULL
       AND JSON_LENGTH(o.raw_payload_json, '$.line_items') > 0
       AND NOT EXISTS (
         SELECT 1 FROM order_factory_packages p WHERE p.order_id = o.id

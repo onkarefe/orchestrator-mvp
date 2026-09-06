@@ -12,7 +12,6 @@ import {
   markJobFailed,
   markJobPendingForRetry,
   releaseStaleProcessingJobs as releaseStaleProcessingJobsInModel,
-  updateJobManualReview,
 } from '../models/JobModel.js';
 import { findOrderById, updateOrderStatus } from '../models/OrderModel.js';
 import { findOrderLineItemByIdentity } from '../models/OrderLineItemModel.js';
@@ -20,9 +19,8 @@ import { processJobToZip } from '../processing/Processor.js';
 import { checkProcessingDiskSpace } from './DiskGuardService.js';
 import { processFactoryUploadTaskById } from './FactoryUploadService.js';
 import { ensureOrderFactoryPackage } from './OrderFactoryPackageService.js';
-import { logError, logInfo, logWarning } from './LogService.js';
+import { logError, logInfo } from './LogService.js';
 import { safeErrorForLog } from '../utils/redact.js';
-import { getOrderLifecycle } from './ShopifyLifecycleService.js';
 
 const MAX_WORKER_ID_LENGTH = 191;
 const ORDER_STATUS_QUEUED = 'queued';
@@ -228,25 +226,6 @@ async function processClaimedJob(job, { workerId = getWorkerId() } = {}) {
 
     if (!order) {
       throw new Error(`Related order not found for job: ${job.id}`);
-    }
-
-    const lifecycle = getOrderLifecycle(order);
-
-    if (lifecycle) {
-      await updateJobManualReview(job.id, lifecycle.reason);
-      await logWarning({
-        scopeType: 'job',
-        orderId: order.id,
-        jobId: job.id,
-        step: 'job.shopify_lifecycle_blocked',
-        message: 'Job processing stopped by Shopify lifecycle state',
-        detailsJson: {
-          lifecycleState: lifecycle.state,
-          reason: lifecycle.reason,
-        },
-      });
-
-      return terminalResult(job, lifecycle.reason);
     }
 
     const lineItem = await findOrderLineItemByIdentity(

@@ -4,7 +4,6 @@ import {
 } from '../constants/lineItemRouting.js';
 
 export const FACTORY_DISPATCH_BLOCK_REASONS = Object.freeze({
-  SHOPIFY_LIFECYCLE_BLOCKED: 'shopify_lifecycle_blocked',
   CLASSIFICATION_INCOMPLETE: 'line_item_classification_incomplete',
   UNKNOWN_LINE_ITEM: 'order_contains_unknown_line_item',
   ACCESSORY_LINE_ITEM: 'order_contains_accessory_line_item',
@@ -18,15 +17,6 @@ function normalizedIdentity(value) {
 }
 
 export function evaluateFactoryDispatchGate({ order, lineItems } = {}) {
-  if (order?.raw_payload_json?.orchestrator_lifecycle?.state) {
-    return {
-      allowed: false,
-      reason:
-        order.raw_payload_json.orchestrator_lifecycle.reason ??
-        FACTORY_DISPATCH_BLOCK_REASONS.SHOPIFY_LIFECYCLE_BLOCKED,
-    };
-  }
-
   const sourceLineItems = order?.raw_payload_json?.line_items;
 
   if (!Array.isArray(sourceLineItems) || !Array.isArray(lineItems)) {

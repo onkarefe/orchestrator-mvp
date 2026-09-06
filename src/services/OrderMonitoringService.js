@@ -1,5 +1,3 @@
-import { getOrderLifecycle } from './ShopifyLifecycleService.js';
-
 function anomaly(code, message, severity = 'warning') {
   return { code, message, severity };
 }
@@ -28,7 +26,6 @@ export function buildOrderMonitoring({
   now = new Date(),
 } = {}) {
   const anomalies = [];
-  const lifecycle = getOrderLifecycle(order);
   const wallpaperLines = lineItems.filter(
     (lineItem) => lineItem.classification === 'WALLPAPER'
   );
@@ -60,8 +57,7 @@ export function buildOrderMonitoring({
   if (
     jobs.length > 0 &&
     completedJobs.length === jobs.length &&
-    !orderPackage &&
-    !lifecycle
+    !orderPackage
   ) {
     anomalies.push(
       anomaly(
@@ -72,7 +68,7 @@ export function buildOrderMonitoring({
     );
   }
 
-  if (orderPackage?.status === 'ready' && !uploadTask && !lifecycle) {
+  if (orderPackage?.status === 'ready' && !uploadTask) {
     anomalies.push(
       anomaly(
         'package_ready_ftp_task_missing',
@@ -152,18 +148,6 @@ export function buildOrderMonitoring({
     );
   }
 
-  if (lifecycle) {
-    anomalies.push(
-      anomaly(
-        'shopify_lifecycle_conflict',
-        lifecycle.state === 'factory_lifecycle_attention_required'
-          ? `Factory-side lifecycle resolution required: ${lifecycle.reason}`
-          : `Factory dispatch blocked by Shopify lifecycle: ${lifecycle.reason}`,
-        'critical'
-      )
-    );
-  }
-
   const reconciliationLog = logs.find(
     (log) =>
       log.step === 'factory_package.assembly_not_ready' &&
@@ -183,7 +167,6 @@ export function buildOrderMonitoring({
   }
 
   return {
-    lifecycle,
     anomalies,
     stages: [
       { name: 'Shopify intake', count: webhooks.length, status: webhooks[0]?.processing_status ?? order?.status },

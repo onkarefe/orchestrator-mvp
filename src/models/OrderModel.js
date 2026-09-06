@@ -241,37 +241,6 @@ export async function updateOrderManualReview(
   return findOrderById(id, executor);
 }
 
-export async function updateOrderLifecycleState(
-  id,
-  {
-    rawPayloadJson,
-    financialStatus = null,
-    status = 'manual_review',
-    manualReviewReason,
-  },
-  db = pool
-) {
-  const executor = getExecutor(db);
-
-  await executor.execute(
-    `UPDATE orders
-    SET raw_payload_json = ?,
-      financial_status = COALESCE(?, financial_status),
-      status = ?,
-      manual_review_reason = ?
-    WHERE id = ?`,
-    [
-      jsonForWrite(rawPayloadJson),
-      financialStatus,
-      status,
-      manualReviewReason,
-      id,
-    ]
-  );
-
-  return findOrderById(id, executor);
-}
-
 export default {
   createOrder,
   findOrderById,
@@ -282,7 +251,6 @@ export default {
   findOrderByShopifyOrderIdForUpdate,
   listOrders,
   updateOrderFactoryState,
-  updateOrderLifecycleState,
   updateOrderStatus,
   updateOrderManualReview,
 };
