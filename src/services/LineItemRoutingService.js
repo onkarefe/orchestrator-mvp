@@ -5,7 +5,7 @@ import {
   LINE_ITEM_ROUTING_STATES,
 } from '../constants/lineItemRouting.js';
 import {
-  isConfiguratorSkuRequired,
+  isWallpaperSku,
   validateConfiguratorLineItem,
 } from './PreflightValidationService.js';
 
@@ -31,19 +31,19 @@ export function isAccessorySku(
 export function classifyShopifyLineItem(
   lineItem,
   {
-    configuratorSkuPrefixes = env.CONFIGURATOR_REQUIRED_SKU_PREFIXES,
+    wallpaperSkus = env.WALLPAPER_SKUS,
     accessorySkus = env.ACCESSORY_SKUS,
     validationOptions,
   } = {}
 ) {
-  const sku = normalizeSku(lineItem?.sku);
+  const sku = lineItem?.sku;
 
   // Wallpaper takes precedence over every other route. A broken item under
   // the trusted wallpaper SKU contract must never fall through to accessory.
-  if (isConfiguratorSkuRequired(sku, configuratorSkuPrefixes)) {
+  if (isWallpaperSku(sku, wallpaperSkus)) {
     const validation = validateConfiguratorLineItem(lineItem, {
       ...validationOptions,
-      configuratorSkuPrefixes,
+      wallpaperSkus,
     });
 
     return {

@@ -152,6 +152,18 @@ try {
   });
   assert.equal(oneReady.ready, true);
   assert.equal(oneReady.positions.length, 1);
+  const invalidQuantityReadiness = await inspectOrderFactoryReadiness({
+    order: oneOrder,
+    lineItems: [{ ...oneLine, quantity: 2 }],
+    jobs: [oneRender.job],
+    artifacts: [oneRender.artifact],
+    artifactsRoot,
+  });
+  assert.equal(invalidQuantityReadiness.ready, false);
+  assert.equal(
+    invalidQuantityReadiness.reason,
+    'wallpaper_quantity_invalid'
+  );
   const oneAssembly = await assembleOrderFactoryPackage({
     order: oneOrder,
     positions: oneReady.positions,
@@ -207,7 +219,7 @@ try {
 
   const twoSources = [
     sourceItem(201, 'WALLPAPER-FIRST', 1),
-    sourceItem(202, 'WALLPAPER-SECOND', 2),
+    sourceItem(202, 'WALLPAPER-SECOND', 1),
   ];
   const twoOrder = orderFixture(2, twoSources);
   const twoLines = twoSources.map((source, index) =>
@@ -241,7 +253,11 @@ try {
   assert.ok(twoXml.includes('<sku>WALLPAPER-FIRST</sku>'));
   assert.ok(twoXml.includes('<sku>WALLPAPER-SECOND</sku>'));
   assert.ok(twoXml.indexOf('WALLPAPER-FIRST') < twoXml.indexOf('WALLPAPER-SECOND'));
-  assert.ok(twoXml.includes('<copies_per_variant>2</copies_per_variant>'));
+  assert.equal(
+    (twoXml.match(/<copies_per_variant>1<\/copies_per_variant>/g) ?? [])
+      .length,
+    2
+  );
   assert.ok(
     twoXml.includes(
       `<order_number>WANDINI-S${twoOrder.shopify_order_id}</order_number>`

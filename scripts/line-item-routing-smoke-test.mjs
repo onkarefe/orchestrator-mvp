@@ -12,10 +12,12 @@ import {
 import { ensureOrderFactoryUploadTask } from '../src/services/FactoryUploadTaskService.js';
 import { createConfiguratorJobFromLineItem } from '../src/services/JobService.js';
 import { classifyShopifyLineItem } from '../src/services/LineItemRoutingService.js';
+import { MANUAL_REVIEW_REASONS } from '../src/services/PreflightValidationService.js';
 
 const validPayload = {
+  version: 1,
   master_asset_id: 'master-1',
-  output: { width: 3000, height: 2400 },
+  output: { width: 3000, height: 2400, unit: 'mm' },
   crop_ratio: { x: 0, y: 0, w: 1, h: 1 },
 };
 
@@ -23,14 +25,14 @@ function item(id, sku, properties = []) {
   return { id, sku, title: `Item ${id}`, quantity: 1, properties };
 }
 
-function configurableItem(id, sku = 'wandini-wallpaper-1') {
+function configurableItem(id, sku = '20-140.1-3', payload = validPayload) {
   return item(id, sku, [
-    { name: 'configurator_payload', value: validPayload },
+    { name: 'configurator_payload', value: payload },
   ]);
 }
 
 const routingOptions = {
-  configuratorSkuPrefixes: ['wandini-'],
+  wallpaperSkus: ['20-140.1-3', '20-140.1-4'],
   accessorySkus: ['ACCESSORY-EXPLICIT'],
   validationOptions: { checkMasterFileExists: false },
 };
@@ -48,8 +50,22 @@ assert.equal(
   validWallpaperRouting.routingState,
   LINE_ITEM_ROUTING_STATES.PRODUCTION_READY
 );
+assert.equal(
+  classifyShopifyLineItem(validWallpaper, {
+    ...routingOptions,
+    wallpaperSkus: ['', ' 20-140.1-3 ', ' '],
+  }).classification,
+  LINE_ITEM_CLASSIFICATIONS.WALLPAPER
+);
+assert.equal(
+  classifyShopifyLineItem(validWallpaper, {
+    ...routingOptions,
+    wallpaperSkus: [],
+  }).classification,
+  LINE_ITEM_CLASSIFICATIONS.UNKNOWN
+);
 
-const missingConfiguratorWallpaper = item(102, 'wandini-wallpaper-2');
+const missingConfiguratorWallpaper = item(102, '20-140.1-4');
 const invalidWallpaperRouting = classifyShopifyLineItem(
   missingConfiguratorWallpaper,
   routingOptions
@@ -94,6 +110,73 @@ assert.equal(unknownRouting.classification, LINE_ITEM_CLASSIFICATIONS.UNKNOWN);
 assert.equal(
   unknownRouting.routingState,
   LINE_ITEM_ROUTING_STATES.FACTORY_BLOCKED
+);
+
+const prefixLikeRouting = classifyShopifyLineItem(
+  configurableItem(105, '20-140.1-3-extra'),
+  routingOptions
+);
+assert.equal(
+  prefixLikeRouting.classification,
+  LINE_ITEM_CLASSIFICATIONS.UNKNOWN
+);
+
+const invalidVersionRouting = classifyShopifyLineItem(
+  configurableItem(106, '20-140.1-3', { ...validPayload, version: 2 }),
+  routingOptions
+);
+assert.equal(
+  invalidVersionRouting.routingState,
+  LINE_ITEM_ROUTING_STATES.FACTORY_BLOCKED
+);
+assert.ok(
+  invalidVersionRouting.validation.errors.includes(
+    MANUAL_REVIEW_REASONS.INVALID_CONFIGURATOR_PAYLOAD_VERSION
+  )
+);
+
+const invalidUnitRouting = classifyShopifyLineItem(
+  configurableItem(107, '20-140.1-3', {
+    ...validPayload,
+    output: { ...validPayload.output, unit: 'cm' },
+  }),
+  routingOptions
+);
+assert.equal(
+  invalidUnitRouting.routingState,
+  LINE_ITEM_ROUTING_STATES.FACTORY_BLOCKED
+);
+assert.ok(
+  invalidUnitRouting.validation.errors.includes(
+    MANUAL_REVIEW_REASONS.INVALID_CONFIGURATOR_OUTPUT_UNIT
+  )
+);
+
+const invalidQuantityItem = {
+  ...configurableItem(108),
+  quantity: 2,
+};
+const invalidQuantityRouting = classifyShopifyLineItem(
+  invalidQuantityItem,
+  routingOptions
+);
+assert.equal(
+  invalidQuantityRouting.routingState,
+  LINE_ITEM_ROUTING_STATES.FACTORY_BLOCKED
+);
+assert.ok(
+  invalidQuantityRouting.validation.errors.includes(
+    MANUAL_REVIEW_REASONS.INVALID_WALLPAPER_QUANTITY
+  )
+);
+
+const secondValidWallpaperRouting = classifyShopifyLineItem(
+  configurableItem(109, '20-140.1-4'),
+  routingOptions
+);
+assert.equal(
+  secondValidWallpaperRouting.routingState,
+  LINE_ITEM_ROUTING_STATES.PRODUCTION_READY
 );
 
 let createdJobCount = 0;

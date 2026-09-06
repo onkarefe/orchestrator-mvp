@@ -1,6 +1,5 @@
 import 'dotenv/config';
 
-import { parseFtpUploadOrderAllowlist } from './ftpUpload.js';
 import { parseShopifyWriteOrderAllowlist } from './shopifyAdmin.js';
 
 function booleanFromEnv(name, defaultValue) {
@@ -97,10 +96,6 @@ function stringFromEnv(name, defaultValue = '') {
 const shopifyWriteOrderAllowlist = parseShopifyWriteOrderAllowlist(
   process.env.SHOPIFY_WRITE_ORDER_ALLOWLIST
 );
-const ftpUploadOrderAllowlist = parseFtpUploadOrderAllowlist(
-  process.env.FTP_UPLOAD_ORDER_ALLOWLIST
-);
-
 const env = {
   PORT: Number(process.env.PORT || 3000),
   DB_HOST: process.env.DB_HOST || '127.0.0.1',
@@ -132,10 +127,7 @@ const env = {
     'SHOPIFY_WEBHOOK_STORE_INVALID',
     true
   ),
-  CONFIGURATOR_REQUIRED_SKU_PREFIXES: csvFromEnv(
-    'CONFIGURATOR_REQUIRED_SKU_PREFIXES',
-    ['wandini-']
-  ),
+  WALLPAPER_SKUS: csvFromEnv('WALLPAPER_SKUS', []),
   ACCESSORY_SKUS: csvFromEnv('ACCESSORY_SKUS', []),
   CONFIGURATOR_MAX_OUTPUT_WIDTH_MM: positiveNumberFromEnv(
     'CONFIGURATOR_MAX_OUTPUT_WIDTH_MM',
@@ -160,9 +152,6 @@ const env = {
   FTP_SECURE: booleanFromEnv('FTP_SECURE', false),
   FTP_UPLOAD_MODE: stringFromEnv('FTP_UPLOAD_MODE', 'files').toLowerCase(),
   FTP_TEMP_SUFFIX: stringFromEnv('FTP_TEMP_SUFFIX', '.uploading'),
-  FTP_UPLOAD_ORDER_ALLOWLIST: ftpUploadOrderAllowlist.orderIds,
-  FTP_UPLOAD_ORDER_ALLOWLIST_INVALID_ENTRIES:
-    ftpUploadOrderAllowlist.invalidEntries,
   FTP_UPLOAD_TASK_MAX_ATTEMPTS: positiveIntegerFromEnv(
     'FTP_UPLOAD_TASK_MAX_ATTEMPTS',
     3

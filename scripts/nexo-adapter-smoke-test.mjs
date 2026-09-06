@@ -150,6 +150,7 @@ assert.equal(redactedHeaders['x-nexo-callback-api-key'], REDACTED_VALUE);
 assert.equal(redactedHeaders.authorization, REDACTED_VALUE);
 
 const startupBase = {
+  WALLPAPER_SKUS: ['20-140.1-3'],
   SHOPIFY_WEBHOOK_HMAC_REQUIRED: false,
   FACTORY_CALLBACK_ENABLED: false,
   NEXO_CALLBACK_AUTH_ENABLED: true,

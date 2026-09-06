@@ -14,6 +14,10 @@ export const MANUAL_REVIEW_REASONS = Object.freeze({
   OUTPUT_WIDTH_EXCEEDS_LIMIT: 'output_width_exceeds_limit',
   OUTPUT_HEIGHT_EXCEEDS_LIMIT: 'output_height_exceeds_limit',
   OUTPUT_AREA_EXCEEDS_LIMIT: 'output_area_exceeds_limit',
+  INVALID_CONFIGURATOR_PAYLOAD_VERSION:
+    'invalid_configurator_payload_version',
+  INVALID_CONFIGURATOR_OUTPUT_UNIT: 'invalid_configurator_output_unit',
+  INVALID_WALLPAPER_QUANTITY: 'invalid_wallpaper_quantity',
 });
 
 function findConfiguratorPayloadProperty(lineItem) {
@@ -49,21 +53,18 @@ function hasSku(lineItem) {
   );
 }
 
-export function isConfiguratorSkuRequired(
+export function isWallpaperSku(
   sku,
-  prefixes = env.CONFIGURATOR_REQUIRED_SKU_PREFIXES
+  wallpaperSkus = env.WALLPAPER_SKUS
 ) {
-  if (typeof sku !== 'string' || !sku.trim()) {
+  if (typeof sku !== 'string' || sku.length === 0) {
     return false;
   }
 
-  const normalizedSku = sku.trim().toLowerCase();
-
-  return prefixes.some((prefix) => {
-    const normalizedPrefix = String(prefix ?? '').trim().toLowerCase();
-
-    return normalizedPrefix && normalizedSku.startsWith(normalizedPrefix);
-  });
+  return (Array.isArray(wallpaperSkus) ? wallpaperSkus : []).some(
+    (configuredSku) =>
+      typeof configuredSku === 'string' && configuredSku.trim() === sku
+  );
 }
 
 function parseConfiguratorPayload(value) {
@@ -162,13 +163,13 @@ export function validateConfiguratorLineItem(
   {
     resolveMasterPathFn = resolveMasterPath,
     checkMasterFileExists = true,
-    configuratorSkuPrefixes = env.CONFIGURATOR_REQUIRED_SKU_PREFIXES,
+    wallpaperSkus = env.WALLPAPER_SKUS,
   } = {}
 ) {
   const payloadProperty = findConfiguratorPayloadProperty(lineItem);
-  const configuratorSkuRequired = isConfiguratorSkuRequired(
+  const configuratorSkuRequired = isWallpaperSku(
     lineItem?.sku,
-    configuratorSkuPrefixes
+    wallpaperSkus
   );
 
   if (!configuratorSkuRequired) {
@@ -206,12 +207,26 @@ export function validateConfiguratorLineItem(
     errors.push(MANUAL_REVIEW_REASONS.MISSING_SKU);
   }
 
+  if (lineItem?.quantity !== 1) {
+    errors.push(MANUAL_REVIEW_REASONS.INVALID_WALLPAPER_QUANTITY);
+  }
+
   if (!parsedPayload.ok) {
     errors.push(MANUAL_REVIEW_REASONS.INVALID_CONFIGURATOR_PAYLOAD);
   }
 
   if (parsedPayload.ok) {
     const masterAssetId = getMasterAssetId(configuratorPayload);
+
+    if (configuratorPayload.version !== 1) {
+      errors.push(
+        MANUAL_REVIEW_REASONS.INVALID_CONFIGURATOR_PAYLOAD_VERSION
+      );
+    }
+
+    if (configuratorPayload?.output?.unit !== 'mm') {
+      errors.push(MANUAL_REVIEW_REASONS.INVALID_CONFIGURATOR_OUTPUT_UNIT);
+    }
 
     if (!masterAssetId) {
       errors.push(MANUAL_REVIEW_REASONS.MISSING_MASTER_ASSET_ID);
@@ -250,6 +265,6 @@ export function validateConfiguratorLineItem(
 
 export default {
   MANUAL_REVIEW_REASONS,
-  isConfiguratorSkuRequired,
+  isWallpaperSku,
   validateConfiguratorLineItem,
 };

@@ -19,10 +19,8 @@ The main production flow is:
 3. Orchestrator creates internal order/job.
 4. Worker processes high-resolution master image.
 5. Worker applies relative `crop_ratio` to the real production master.
-6. Worker creates panel PDFs, XML, ZIP, and later manifest/checksum.
-7. Phase 1 stops at safe local artifact generation and admin download.
-
-There is no automatic factory FTP upload in Phase 1.
+6. Worker creates panel PDFs, XML, ZIP, and manifest/checksum artifacts.
+7. A validated order-level factory package is dispatched automatically only when `FTP_UPLOAD_ENABLED=true`.
 
 ## 3. Reverse Flow
 
@@ -37,9 +35,9 @@ NEXO should not connect directly to Shopify. The Orchestrator owns Shopify Admin
 
 ## 4. Phase 1 External Write Policy
 
-Phase 1 does not perform real external production writes:
+External production writes remain controlled by explicit global switches:
 
-- No real FTP upload in Phase 1.
+- Factory FTP upload is disabled when `FTP_UPLOAD_ENABLED=false` and automatic for every eligible package-ready order when it is `true`.
 - No real NEXO integration in Phase 1.
 - No real Shopify write by default in Phase 1.
 - Shopify Admin API update layer must default to dry-run unless explicitly enabled.
@@ -74,6 +72,10 @@ Each job must work in an isolated folder. Shared temp filenames are forbidden.
 
 `crop_ratio` is relative and must be applied to the high-resolution master image. The storefront preview image is not the production source.
 
+Wallpaper classification uses exact, case-sensitive matches from the comma-separated `WALLPAPER_SKUS` environment variable. Entries are trimmed and empty entries are ignored. There is no prefix, tag, or pattern fallback. The Shopify SKU is the NEXO material SKU and is carried to XML unchanged.
+
+A wallpaper configurator payload must have `version` exactly `1` and `output.unit` exactly `mm`. Each wallpaper line item must have `quantity` exactly `1`; multiple distinct quantity-1 wallpaper lines remain separate jobs and NEXO positions in one order-level package and XML.
+
 ## 8. Panel Math Contract
 
 Panel split must use max-700mm equal split.
@@ -97,9 +99,7 @@ XML file references must exactly match generated PDF filenames.
 
 PDF page dimensions must match the corresponding panel dimensions.
 
-`copies_per_variant` is always `1` unless explicitly changed later.
-
-Shopify `line_item.quantity` must not be used as production copy count.
+`copies_per_variant` is always `1`, enforced by requiring wallpaper `line_item.quantity === 1`.
 
 Missing SKU must not silently produce production XML in the final safety model.
 
@@ -119,6 +119,10 @@ The following conditions must not continue automatically:
 - Unsafe duplicate
 
 Manual review means no factory upload and no Shopify status write.
+
+## 10.1 Factory FTP Dispatch Contract
+
+`FTP_UPLOAD_ENABLED=false` prevents upload task claims and FTP execution. `FTP_UPLOAD_ENABLED=true` makes every otherwise valid, package-ready factory order eligible for automatic dispatch. There is no per-order FTP allowlist or manual approval gate. Artifact, checksum, path, ownership, retry, and idempotency validation remain mandatory, with PDFs uploaded before the final XML.
 
 ## 11. Database / Migration Safety
 

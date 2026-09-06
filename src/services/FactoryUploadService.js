@@ -4,11 +4,9 @@ import path from 'node:path';
 
 import env from '../config/env.js';
 import {
-  isFtpUploadOrderAllowlisted,
   isSupportedFtpProtocol,
   normalizeFtpRemoteDir,
   normalizeFtpTempSuffix,
-  parseFtpUploadOrderAllowlist,
 } from '../config/ftpUpload.js';
 import { artifactsDir } from '../config/paths.js';
 import {
@@ -24,7 +22,7 @@ import {
   markFactoryUploadTaskUploaded,
   releaseFactoryUploadTaskClaimToPending,
   releaseStaleFactoryUploadTaskClaims,
-  requeueEligibleTemporarilySuppressedFactoryUploadTasks,
+  requeueTemporarilySuppressedFactoryUploadTasks,
   requeueTemporarilySuppressedFactoryUploadTask,
   updateFactoryUploadTaskProgress,
 } from '../models/FactoryUploadTaskModel.js';
@@ -452,18 +450,9 @@ function getFtpConfigurationReadinessReason(config) {
   return null;
 }
 
-function getTaskReadinessReason({ task, config }) {
+function getTaskReadinessReason({ config }) {
   if (!config.FTP_UPLOAD_ENABLED) {
     return 'ftp_upload_disabled';
-  }
-
-  if (
-    !isFtpUploadOrderAllowlisted(
-      task.shopify_order_id,
-      config.FTP_UPLOAD_ORDER_ALLOWLIST
-    )
-  ) {
-    return 'order_not_allowlisted';
   }
 
   return getFtpConfigurationReadinessReason(config);
@@ -964,12 +953,7 @@ export async function processFactoryUploadTaskById(
     };
   }
 
-  if (
-    existingTask.status === FACTORY_UPLOAD_TASK_STATUSES.SUPPRESSED &&
-    ['ftp_upload_disabled', 'order_not_allowlisted'].includes(
-      existingTask.suppressed_reason
-    )
-  ) {
+  if (existingTask.status === FACTORY_UPLOAD_TASK_STATUSES.SUPPRESSED) {
     const requeued = await requeueTemporarilySuppressedFactoryUploadTask(
       existingTask.id
     );
@@ -1021,16 +1005,9 @@ export async function processNextFactoryUploadTask({
   workerId,
   config = env,
   ftpClientFactory,
+  runtime = {},
 } = {}) {
   if (!config.FTP_UPLOAD_ENABLED) {
-    return null;
-  }
-
-  const allowlist = parseFtpUploadOrderAllowlist(
-    config.FTP_UPLOAD_ORDER_ALLOWLIST
-  );
-
-  if (allowlist.orderIds.length === 0) {
     return null;
   }
 
@@ -1038,23 +1015,31 @@ export async function processNextFactoryUploadTask({
     return null;
   }
 
-  await requeueEligibleTemporarilySuppressedFactoryUploadTasks({
-    shopifyOrderIds: allowlist.orderIds,
-  });
-  await releaseStaleFactoryUploadTaskClaims({
+  const requeueSuppressedTasks =
+    runtime.requeueTemporarilySuppressedFactoryUploadTasks ??
+    requeueTemporarilySuppressedFactoryUploadTasks;
+  const releaseStaleClaims =
+    runtime.releaseStaleFactoryUploadTaskClaims ??
+    releaseStaleFactoryUploadTaskClaims;
+  const claimNextTask =
+    runtime.claimNextFactoryUploadTask ?? claimNextFactoryUploadTask;
+  const processClaimedTask =
+    runtime.processClaimedFactoryUploadTask ?? processClaimedFactoryUploadTask;
+
+  await requeueSuppressedTasks();
+  await releaseStaleClaims({
     staleLockMinutes: config.PROCESSING_STALE_LOCK_MINUTES,
   });
-  const task = await claimNextFactoryUploadTask({
+  const task = await claimNextTask({
     workerId,
     maxAttempts: config.FTP_UPLOAD_TASK_MAX_ATTEMPTS,
-    shopifyOrderIds: allowlist.orderIds,
   });
 
   if (!task) {
     return null;
   }
 
-  return processClaimedFactoryUploadTask({
+  return processClaimedTask({
     task,
     workerId,
     config,

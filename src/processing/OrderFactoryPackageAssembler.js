@@ -222,7 +222,7 @@ export async function inspectOrderFactoryReadiness({
       });
     }
 
-    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+    if (!Number.isSafeInteger(quantity) || quantity !== 1) {
       return blocked('wallpaper_quantity_invalid', {
         shopifyLineItemId: lineItemId,
       });

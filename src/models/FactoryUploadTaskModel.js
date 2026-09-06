@@ -65,16 +65,6 @@ function normalizeClaimOptions({ workerId, maxAttempts } = {}) {
   };
 }
 
-function normalizeShopifyOrderIds(value) {
-  return [
-    ...new Set(
-      (Array.isArray(value) ? value : [])
-        .map((orderId) => String(orderId).trim())
-        .filter((orderId) => /^[1-9][0-9]*$/.test(orderId))
-    ),
-  ].slice(0, 1000);
-}
-
 export async function createFactoryUploadTask(data, db = pool) {
   const executor = getExecutor(db);
   const [result] = await executor.execute(
@@ -323,18 +313,6 @@ export async function claimFactoryUploadTaskById(id, options = {}) {
 
 export async function claimNextFactoryUploadTask(options = {}) {
   const claimOptions = normalizeClaimOptions(options);
-  const hasShopifyOrderFilter = options.shopifyOrderIds !== undefined;
-  const shopifyOrderIds = normalizeShopifyOrderIds(options.shopifyOrderIds);
-
-  if (hasShopifyOrderFilter && shopifyOrderIds.length === 0) {
-    return null;
-  }
-
-  const shopifyOrderFilterSql = hasShopifyOrderFilter
-    ? ` AND shopify_order_id IN (${shopifyOrderIds
-        .map(() => '?')
-        .join(', ')})`
-    : '';
   const connection = await pool.getConnection();
 
   try {
@@ -343,7 +321,7 @@ export async function claimNextFactoryUploadTask(options = {}) {
       `SELECT * FROM factory_upload_tasks
       WHERE status IN (?, ?)
         AND COALESCE(attempt_count, 0) <
-          LEAST(COALESCE(max_attempts, ?), ?)${shopifyOrderFilterSql}
+          LEAST(COALESCE(max_attempts, ?), ?)
       ORDER BY created_at ASC, id ASC
       LIMIT 1
       FOR UPDATE SKIP LOCKED`,
@@ -352,7 +330,6 @@ export async function claimNextFactoryUploadTask(options = {}) {
         FACTORY_UPLOAD_TASK_STATUSES.FAILED,
         claimOptions.maxAttempts,
         claimOptions.maxAttempts,
-        ...shopifyOrderIds,
       ]
     );
     const candidate = rows[0];
@@ -433,16 +410,7 @@ export async function requeueTemporarilySuppressedFactoryUploadTask(id) {
   };
 }
 
-export async function requeueEligibleTemporarilySuppressedFactoryUploadTasks({
-  shopifyOrderIds,
-} = {}) {
-  const normalizedOrderIds = normalizeShopifyOrderIds(shopifyOrderIds);
-
-  if (normalizedOrderIds.length === 0) {
-    return 0;
-  }
-
-  const placeholders = normalizedOrderIds.map(() => '?').join(', ');
+export async function requeueTemporarilySuppressedFactoryUploadTasks() {
   const [result] = await pool.execute(
     `UPDATE factory_upload_tasks
     SET status = ?,
@@ -451,14 +419,14 @@ export async function requeueEligibleTemporarilySuppressedFactoryUploadTasks({
       locked_at = NULL,
       locked_by = NULL
     WHERE status = ?
-      AND suppressed_reason IN (?, ?)
-      AND shopify_order_id IN (${placeholders})`,
+      AND suppressed_reason IN (?, ?)`,
     [
       FACTORY_UPLOAD_TASK_STATUSES.PENDING,
       FACTORY_UPLOAD_TASK_STATUSES.SUPPRESSED,
       'ftp_upload_disabled',
+      // Compatibility for tasks suppressed before the per-order FTP gate
+      // was removed. This reason is recovery-only and is never produced now.
       'order_not_allowlisted',
-      ...normalizedOrderIds,
     ]
   );
 
@@ -599,7 +567,7 @@ export default {
   markFactoryUploadTaskUploaded,
   releaseFactoryUploadTaskClaimToPending,
   releaseStaleFactoryUploadTaskClaims,
-  requeueEligibleTemporarilySuppressedFactoryUploadTasks,
+  requeueTemporarilySuppressedFactoryUploadTasks,
   requeueTemporarilySuppressedFactoryUploadTask,
   updateFactoryUploadTaskProgress,
 };

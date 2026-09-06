@@ -1,43 +1,4 @@
-const SHOPIFY_ORDER_ID_PATTERN = /^[1-9][0-9]*$/;
 const SUPPORTED_PROTOCOLS = new Set(['ftp', 'ftps']);
-
-function valuesFromInput(value) {
-  if (Array.isArray(value)) {
-    return value.map((item) => String(item).trim()).filter(Boolean);
-  }
-
-  if (value === undefined || value === null || String(value).trim() === '') {
-    return [];
-  }
-
-  return String(value)
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-export function parseFtpUploadOrderAllowlist(value) {
-  const orderIds = [];
-  const invalidEntries = [];
-  const seen = new Set();
-
-  for (const entry of valuesFromInput(value)) {
-    if (!SHOPIFY_ORDER_ID_PATTERN.test(entry)) {
-      invalidEntries.push(entry);
-      continue;
-    }
-
-    if (!seen.has(entry)) {
-      seen.add(entry);
-      orderIds.push(entry);
-    }
-  }
-
-  return {
-    orderIds,
-    invalidEntries,
-  };
-}
 
 export function normalizeFtpProtocol(value) {
   return String(value ?? 'ftp').trim().toLowerCase();
@@ -79,23 +40,9 @@ export function normalizeFtpTempSuffix(value) {
   return normalized;
 }
 
-export function isFtpUploadOrderAllowlisted(orderId, allowlist) {
-  const normalizedOrderId = String(orderId ?? '').trim();
-
-  if (!SHOPIFY_ORDER_ID_PATTERN.test(normalizedOrderId)) {
-    return false;
-  }
-
-  return parseFtpUploadOrderAllowlist(allowlist).orderIds.includes(
-    normalizedOrderId
-  );
-}
-
 export default {
-  isFtpUploadOrderAllowlisted,
   isSupportedFtpProtocol,
   normalizeFtpProtocol,
   normalizeFtpRemoteDir,
   normalizeFtpTempSuffix,
-  parseFtpUploadOrderAllowlist,
 };

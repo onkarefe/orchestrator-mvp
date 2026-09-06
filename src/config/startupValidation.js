@@ -4,7 +4,6 @@ import {
   normalizeFtpProtocol,
   normalizeFtpRemoteDir,
   normalizeFtpTempSuffix,
-  parseFtpUploadOrderAllowlist,
 } from './ftpUpload.js';
 import {
   normalizeShopifyAdminApiVersion,
@@ -24,14 +23,6 @@ export function validateFtpUploadStartupEnv(config = env) {
   }
 
   const protocol = normalizeFtpProtocol(config.FTP_PROTOCOL);
-  const allowlist = parseFtpUploadOrderAllowlist(
-    config.FTP_UPLOAD_ORDER_ALLOWLIST
-  );
-  const invalidAllowlistEntries = [
-    ...allowlist.invalidEntries,
-    ...(config.FTP_UPLOAD_ORDER_ALLOWLIST_INVALID_ENTRIES ?? []),
-  ];
-
   if (!isSupportedFtpProtocol(protocol)) {
     errors.push(
       protocol === 'sftp'
@@ -76,24 +67,33 @@ export function validateFtpUploadStartupEnv(config = env) {
     );
   }
 
-  if (invalidAllowlistEntries.length > 0) {
-    errors.push(
-      'FTP_UPLOAD_ORDER_ALLOWLIST must contain only numeric Shopify order IDs when FTP_UPLOAD_ENABLED=true'
-    );
-  }
-
-  if (allowlist.orderIds.length === 0) {
-    errors.push(
-      'FTP_UPLOAD_ORDER_ALLOWLIST must contain at least one numeric Shopify order ID when FTP_UPLOAD_ENABLED=true'
-    );
-  }
-
   if (errors.length) {
     const error = new Error(
       `Unsafe FTP upload configuration: ${errors.join('; ')}`
     );
     error.code = 'UNSAFE_FTP_UPLOAD_CONFIGURATION';
     error.validationErrors = errors;
+    throw error;
+  }
+
+  return true;
+}
+
+export function validateWallpaperSkuStartupEnv(config = env) {
+  const wallpaperSkus = Array.isArray(config.WALLPAPER_SKUS)
+    ? config.WALLPAPER_SKUS.filter(
+        (sku) => typeof sku === 'string' && sku.trim().length > 0
+      )
+    : [];
+
+  if (wallpaperSkus.length === 0) {
+    const error = new Error(
+      'Unsafe wallpaper configuration: WALLPAPER_SKUS must contain at least one exact SKU'
+    );
+    error.code = 'UNSAFE_WALLPAPER_SKU_CONFIGURATION';
+    error.validationErrors = [
+      'WALLPAPER_SKUS must contain at least one exact SKU',
+    ];
     throw error;
   }
 
@@ -109,6 +109,12 @@ export function validateServerStartupEnv(config = env) {
     ...allowlist.invalidEntries,
     ...(config.SHOPIFY_WRITE_ORDER_ALLOWLIST_INVALID_ENTRIES ?? []),
   ];
+
+  try {
+    validateWallpaperSkuStartupEnv(config);
+  } catch (error) {
+    errors.push(...(error.validationErrors ?? [error.message]));
+  }
 
   if (
     config.SHOPIFY_WEBHOOK_HMAC_REQUIRED &&
@@ -238,9 +244,6 @@ export function getSafeStartupConfigSummary(config = env) {
     ftpRemoteDirConfigured: Boolean(
       normalizeFtpRemoteDir(config.FTP_REMOTE_DIR)
     ),
-    ftpUploadOrderAllowlistCount: parseFtpUploadOrderAllowlist(
-      config.FTP_UPLOAD_ORDER_ALLOWLIST
-    ).orderIds.length,
     ftpUploadTaskMaxAttempts:
       Number(config.FTP_UPLOAD_TASK_MAX_ATTEMPTS) || 0,
     shopifyWriteEnabled: Boolean(config.SHOPIFY_WRITE_ENABLED),
@@ -266,8 +269,7 @@ export function getSafeStartupConfigSummary(config = env) {
       Number(config.SHOPIFY_UPDATE_TASK_BATCH_SIZE) || 0,
     shopifyUpdateTaskMaxAttempts:
       Number(config.SHOPIFY_UPDATE_TASK_MAX_ATTEMPTS) || 0,
-    configuratorRequiredSkuPrefixCount:
-      config.CONFIGURATOR_REQUIRED_SKU_PREFIXES?.length ?? 0,
+    wallpaperSkuCount: config.WALLPAPER_SKUS?.length ?? 0,
     accessorySkuCount: config.ACCESSORY_SKUS?.length ?? 0,
     configuratorMaxOutputWidthMm: config.CONFIGURATOR_MAX_OUTPUT_WIDTH_MM,
     configuratorMaxOutputHeightMm: config.CONFIGURATOR_MAX_OUTPUT_HEIGHT_MM,
@@ -279,4 +281,5 @@ export default {
   getSafeStartupConfigSummary,
   validateFtpUploadStartupEnv,
   validateServerStartupEnv,
+  validateWallpaperSkuStartupEnv,
 };

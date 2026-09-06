@@ -1,6 +1,7 @@
 import {
   getSafeStartupConfigSummary,
   validateFtpUploadStartupEnv,
+  validateWallpaperSkuStartupEnv,
 } from './config/startupValidation.js';
 import env from './config/env.js';
 import {
@@ -123,6 +124,7 @@ function stop(signal) {
 }
 
 validateFtpUploadStartupEnv();
+validateWallpaperSkuStartupEnv();
 
 const startupConfig = getSafeStartupConfigSummary();
 
@@ -136,8 +138,6 @@ console.log(
     ftpHostConfigured: startupConfig.ftpHostConfigured,
     ftpCredentialsConfigured: startupConfig.ftpCredentialsConfigured,
     ftpRemoteDirConfigured: startupConfig.ftpRemoteDirConfigured,
-    ftpUploadOrderAllowlistCount:
-      startupConfig.ftpUploadOrderAllowlistCount,
     ftpUploadTaskMaxAttempts: startupConfig.ftpUploadTaskMaxAttempts,
     workerRecoveryIntervalMs: env.WORKER_RECOVERY_INTERVAL_MS,
     workerRecoveryBatchSize: env.WORKER_RECOVERY_BATCH_SIZE,

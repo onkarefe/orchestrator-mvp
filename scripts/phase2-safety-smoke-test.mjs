@@ -7,6 +7,11 @@ import {
 import { REDACTED_VALUE, redact } from '../src/utils/redact.js';
 import { buildFactoryReference } from '../src/utils/factoryReference.js';
 
+const wallpaperValidationOptions = {
+  checkMasterFileExists: false,
+  wallpaperSkus: ['20-140.1-3'],
+};
+
 const redactedHeaders = redact({
   'X-API-Key': 'factory-secret',
   nested: [
@@ -34,10 +39,11 @@ assert.equal(redactedHeaders.nested[4].shopifyApiKey, REDACTED_VALUE);
 const missingPayload = validateConfiguratorLineItem(
   {
     id: 1,
-    sku: 'wandini-prod1-b',
+    sku: '20-140.1-3',
+    quantity: 1,
     properties: [],
   },
-  { checkMasterFileExists: false }
+  wallpaperValidationOptions
 );
 
 assert.equal(missingPayload.isConfigurable, true);
@@ -53,7 +59,7 @@ const nonConfigurableAddon = validateConfiguratorLineItem(
     sku: 'gift-wrap',
     properties: [],
   },
-  { checkMasterFileExists: false }
+  wallpaperValidationOptions
 );
 
 assert.equal(nonConfigurableAddon.isConfigurable, false);
@@ -62,19 +68,21 @@ assert.equal(nonConfigurableAddon.ok, true);
 const testedSize = validateConfiguratorLineItem(
   {
     id: 3,
-    sku: 'wandini-prod1-b',
+    sku: '20-140.1-3',
+    quantity: 1,
     properties: [
       {
         name: 'configurator_payload',
         value: JSON.stringify({
+          version: 1,
           master_asset_id: 'master-1',
-          output: { width: 5000, height: 2000 },
+          output: { width: 5000, height: 2000, unit: 'mm' },
           crop_ratio: { x: 0, y: 0, w: 1, h: 1 },
         }),
       },
     ],
   },
-  { checkMasterFileExists: false }
+  wallpaperValidationOptions
 );
 
 assert.equal(testedSize.ok, true);
@@ -82,19 +90,21 @@ assert.equal(testedSize.ok, true);
 const oversized = validateConfiguratorLineItem(
   {
     id: 4,
-    sku: 'wandini-prod1-b',
+    sku: '20-140.1-3',
+    quantity: 1,
     properties: [
       {
         name: 'configurator_payload',
         value: {
+          version: 1,
           master_asset_id: 'master-1',
-          output: { width: 20001, height: 2000 },
+          output: { width: 20001, height: 2000, unit: 'mm' },
           crop_ratio: { x: 0, y: 0, w: 1, h: 1 },
         },
       },
     ],
   },
-  { checkMasterFileExists: false }
+  wallpaperValidationOptions
 );
 
 assert.equal(oversized.ok, false);
