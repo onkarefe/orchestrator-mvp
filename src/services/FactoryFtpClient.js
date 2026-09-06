@@ -162,6 +162,20 @@ export class FactoryFtpClient {
     }
   }
 
+  async downloadFile(remoteFileName, localPath) {
+    const fileName = assertRemoteFileName(remoteFileName);
+
+    try {
+      await this.client.downloadTo(localPath, fileName);
+    } catch (error) {
+      throw new FactoryFtpError(
+        'ftp_remote_download_failed',
+        `Factory FTP file could not be read for identity verification: ${fileName}`,
+        { retryable: true, cause: error }
+      );
+    }
+  }
+
   async renameTemporary(temporaryFileName, finalFileName) {
     const temporaryName = assertRemoteFileName(temporaryFileName);
     const finalName = assertRemoteFileName(finalFileName);

@@ -371,6 +371,33 @@ export async function updateJobManualReview(
   return findJobById(id, executor);
 }
 
+export async function blockOrderJobsForLifecycle(
+  orderId,
+  manualReviewReason,
+  db = pool
+) {
+  const executor = getExecutor(db);
+  const [result] = await executor.execute(
+    `UPDATE jobs
+    SET status = ?,
+      manual_review_reason = ?,
+      locked_at = NULL,
+      locked_by = NULL
+    WHERE order_id = ?
+      AND status IN (?, ?, ?)`,
+    [
+      JOB_STATUSES.MANUAL_REVIEW,
+      manualReviewReason,
+      orderId,
+      JOB_STATUSES.PENDING,
+      JOB_STATUSES.VALIDATING,
+      JOB_STATUSES.PROCESSING,
+    ]
+  );
+
+  return result.affectedRows;
+}
+
 export async function markJobProcessing(id) {
   await pool.execute(
     'UPDATE jobs SET status = ?, started_at = CURRENT_TIMESTAMP WHERE id = ?',
@@ -522,6 +549,7 @@ export default {
   listJobsByOrderId,
   claimNextPendingJob,
   claimPendingJobById,
+  blockOrderJobsForLifecycle,
   updateJobStatus,
   updateJobManualReview,
   markJobProcessing,

@@ -38,6 +38,11 @@ async function shutdown(signal) {
 
   shutdownStarted = true;
   console.log(`Shopify update consumer stopping after ${signal}`);
+  const forceExit = setTimeout(() => {
+    console.error('Shopify update consumer shutdown deadline reached');
+    process.exit(1);
+  }, 30000);
+  forceExit.unref();
 
   try {
     await consumer.stop();
@@ -48,6 +53,8 @@ async function shutdown(signal) {
       safeErrorForLog(error)
     );
     process.exitCode = 1;
+  } finally {
+    clearTimeout(forceExit);
   }
 }
 

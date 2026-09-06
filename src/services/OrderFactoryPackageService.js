@@ -164,7 +164,11 @@ export async function ensureOrderFactoryPackage({
         step: 'factory_package.assembly_not_ready',
         message: 'Order-level factory package assembly was blocked safely',
         detailsJson: {
-          reason: 'order_factory_package_assembly_failed',
+          reason: String(error?.message ?? '').startsWith(
+            'order_factory_package_orphan_'
+          )
+            ? error.message
+            : 'order_factory_package_assembly_failed',
           error: safeErrorForLog(error),
         },
       });
@@ -172,7 +176,11 @@ export async function ensureOrderFactoryPackage({
       return {
         disposition: 'not_ready',
         created: false,
-        reason: 'order_factory_package_assembly_failed',
+        reason: String(error?.message ?? '').startsWith(
+          'order_factory_package_orphan_'
+        )
+          ? error.message
+          : 'order_factory_package_assembly_failed',
         order,
         orderPackage: null,
         artifact: null,
@@ -258,7 +266,11 @@ export async function ensureOrderFactoryPackage({
       transactionStarted = false;
     }
 
-    if (assembled?.packageDir && !packageCommitted) {
+    if (
+      assembled?.packageDir &&
+      assembled.recoveredExisting !== true &&
+      !packageCommitted
+    ) {
       await removePackage(assembled.packageDir);
     }
 

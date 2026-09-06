@@ -194,7 +194,12 @@ export async function findOriginalWebhookByShopifyOrderId(
   return normalizeWebhook(rows[0]);
 }
 
-export async function listWebhooks({ status, limit, offset } = {}) {
+export async function listWebhooks({
+  status,
+  shopifyOrderId,
+  limit,
+  offset,
+} = {}) {
   const params = [];
   const conditions = [];
   const pagination = normalizePagination(limit, offset);
@@ -202,6 +207,11 @@ export async function listWebhooks({ status, limit, offset } = {}) {
   if (status !== undefined && status !== null) {
     conditions.push('status = ?');
     params.push(status);
+  }
+
+  if (shopifyOrderId !== undefined && shopifyOrderId !== null) {
+    conditions.push('shopify_order_id = ?');
+    params.push(shopifyOrderId);
   }
 
   const whereSql = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';

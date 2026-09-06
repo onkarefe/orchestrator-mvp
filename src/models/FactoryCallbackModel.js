@@ -113,12 +113,22 @@ export async function findFactoryCallbackById(id, db = pool) {
   return normalizeFactoryCallback(rows[0]);
 }
 
-export async function listFactoryCallbacks({ limit, offset } = {}) {
+export async function listFactoryCallbacks({ orderId, limit, offset } = {}) {
   const pagination = normalizePagination(limit, offset);
+  const conditions = [];
+  const params = [];
+
+  if (orderId !== undefined && orderId !== null) {
+    conditions.push('order_id = ?');
+    params.push(orderId);
+  }
+
+  const whereSql = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
   const [rows] = await pool.execute(
-    `SELECT * FROM factory_callbacks
+    `SELECT * FROM factory_callbacks${whereSql}
     ORDER BY created_at DESC
-    LIMIT ${pagination.limit} OFFSET ${pagination.offset}`
+    LIMIT ${pagination.limit} OFFSET ${pagination.offset}`,
+    params
   );
 
   return rows.map(normalizeFactoryCallback);

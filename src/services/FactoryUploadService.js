@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import env from '../config/env.js';
@@ -377,6 +378,7 @@ export async function resolveFactoryUploadFiles({
       type: 'pdf',
       fileName,
       filePath,
+      checksum: fileChecksum,
     });
   }
 
@@ -422,6 +424,7 @@ export async function resolveFactoryUploadFiles({
       type: 'xml',
       fileName: configuredXmlFileName,
       filePath: xmlPath,
+      checksum: xmlChecksum,
     },
     pdfFiles,
   };
@@ -576,6 +579,7 @@ function setProgress(progress, file, remotePath) {
     type: file.type,
     file_name: file.fileName,
     remote_path: remotePath,
+    checksum_sha256: file.checksum,
     status: 'renamed',
   });
 
@@ -674,13 +678,34 @@ async function logNotReady(task, reason) {
   };
 }
 
-async function uploadFile({
+async function verifyExistingRemoteFile({ ftpClient, file }) {
+  const verificationDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'wandini-ftp-verify-')
+  );
+  const downloadedPath = path.join(verificationDir, file.fileName);
+
+  try {
+    await ftpClient.downloadFile(file.fileName, downloadedPath);
+    const remoteChecksum = await calculateFileSha256(downloadedPath);
+
+    return remoteChecksum === file.checksum;
+  } finally {
+    await fs.rm(verificationDir, { recursive: true, force: true });
+  }
+}
+
+export async function uploadFile({
   ftpClient,
   file,
   task,
   workerId,
   progress,
+  runtime = {},
 }) {
+  const updateProgress =
+    runtime.updateFactoryUploadTaskProgress ??
+    updateFactoryUploadTaskProgress;
+  const writeInfoLog = runtime.logInfo ?? logInfo;
   const recorded = findProgress(progress, file);
   const finalExists = await ftpClient.fileExists(file.fileName);
 
@@ -689,10 +714,51 @@ async function uploadFile({
   }
 
   if (finalExists) {
-    throw new FactoryFtpError(
-      'remote_file_exists',
-      `Factory FTP file already exists: ${file.fileName}`
+    const identityMatches = await verifyExistingRemoteFile({
+      ftpClient,
+      file,
+    });
+
+    if (!identityMatches) {
+      throw new FactoryFtpError(
+        'remote_file_identity_mismatch',
+        `Factory FTP file identity could not be reconciled: ${file.fileName}`
+      );
+    }
+
+    const reconciledProgress = setProgress(
+      progress,
+      file,
+      ftpClient.remotePath(file.fileName)
     );
+    const progressUpdated = await updateProgress(task.id, {
+      workerId,
+      uploadedFiles: reconciledProgress,
+    });
+
+    if (!progressUpdated) {
+      throw new FactoryFtpError(
+        'factory_upload_task_claim_lost',
+        'Factory upload task claim was lost while reconciling progress'
+      );
+    }
+
+    await writeInfoLog({
+      scopeType: 'job',
+      orderId: task.order_id,
+      jobId: task.job_id,
+      step: 'factory_upload.remote_file_reconciled',
+      message: 'Existing final factory file matched expected checksum',
+      detailsJson: {
+        taskId: task.id,
+        artifactId: task.artifact_id,
+        fileType: file.type,
+        remotePath: ftpClient.remotePath(file.fileName),
+        checksum: file.checksum,
+      },
+    });
+
+    return reconciledProgress;
   }
 
   const temporary = await ftpClient.uploadTemporary(
@@ -700,7 +766,7 @@ async function uploadFile({
     file.fileName
   );
 
-  await logInfo({
+  await writeInfoLog({
     scopeType: 'job',
     orderId: task.order_id,
     jobId: task.job_id,
@@ -724,7 +790,7 @@ async function uploadFile({
     file,
     ftpClient.remotePath(file.fileName)
   );
-  const progressUpdated = await updateFactoryUploadTaskProgress(task.id, {
+  const progressUpdated = await updateProgress(task.id, {
     workerId,
     uploadedFiles: nextProgress,
   });
@@ -736,7 +802,7 @@ async function uploadFile({
     );
   }
 
-  await logInfo({
+  await writeInfoLog({
     scopeType: 'job',
     orderId: task.order_id,
     jobId: task.job_id,

@@ -1,6 +1,15 @@
+import env from '../../config/env.js';
+import { listArtifactsByOrderId } from '../../models/ArtifactModel.js';
+import { listFactoryCallbacks } from '../../models/FactoryCallbackModel.js';
+import { findFactoryUploadTaskByOrderPackageId } from '../../models/FactoryUploadTaskModel.js';
 import { listJobs } from '../../models/JobModel.js';
 import { listLogs } from '../../models/LogModel.js';
+import { findOrderFactoryPackageByOrderId } from '../../models/OrderFactoryPackageModel.js';
+import { listOrderLineItemsByOrderId } from '../../models/OrderLineItemModel.js';
 import { findOrderById, listOrders } from '../../models/OrderModel.js';
+import { listShopifyUpdateTasks } from '../../models/ShopifyUpdateTaskModel.js';
+import { listWebhooks } from '../../models/WebhookModel.js';
+import { buildOrderMonitoring } from '../../services/OrderMonitoringService.js';
 import { redact } from '../../utils/redact.js';
 
 function prettyJson(value) {
@@ -52,14 +61,59 @@ const OrderController = {
       }
 
       const title = `Order #${order.id}`;
-      const jobs = await listJobs({ orderId: order.id, limit: 100, offset: 0 });
-      const logs = await listLogs({ orderId: order.id, limit: 100, offset: 0 });
+      const [
+        jobs,
+        logs,
+        lineItems,
+        artifacts,
+        orderPackage,
+        factoryCallbacks,
+        shopifyUpdateTasks,
+        webhooks,
+      ] = await Promise.all([
+        listJobs({ orderId: order.id, limit: 100, offset: 0 }),
+        listLogs({ orderId: order.id, limit: 100, offset: 0 }),
+        listOrderLineItemsByOrderId(order.id),
+        listArtifactsByOrderId(order.id),
+        findOrderFactoryPackageByOrderId(order.id),
+        listFactoryCallbacks({ orderId: order.id, limit: 100, offset: 0 }),
+        listShopifyUpdateTasks({ orderId: order.id, limit: 100, offset: 0 }),
+        listWebhooks({
+          shopifyOrderId: order.shopify_order_id,
+          limit: 100,
+          offset: 0,
+        }),
+      ]);
+      const uploadTask = orderPackage
+        ? await findFactoryUploadTaskByOrderPackageId(orderPackage.id)
+        : null;
+      const monitoring = buildOrderMonitoring({
+        order,
+        webhooks,
+        lineItems,
+        jobs,
+        artifacts,
+        orderPackage,
+        uploadTask,
+        factoryCallbacks,
+        shopifyUpdateTasks,
+        logs,
+        staleMinutes: env.PROCESSING_STALE_LOCK_MINUTES,
+      });
 
       renderPage(res, next, 'pages/order-detail', {
         title,
         order,
         jobs,
         logs,
+        lineItems,
+        artifacts,
+        orderPackage,
+        uploadTask,
+        factoryCallbacks,
+        shopifyUpdateTasks,
+        webhooks,
+        monitoring,
         rawPayloadJson: prettyJson(order.raw_payload_json),
       });
     } catch (error) {

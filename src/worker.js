@@ -4,6 +4,7 @@ import {
   validateWallpaperSkuStartupEnv,
 } from './config/startupValidation.js';
 import env from './config/env.js';
+import pool from './db/connection.js';
 import {
   getWorkerId,
   processNextPendingJob,
@@ -102,7 +103,11 @@ async function tick() {
   }
 }
 
-function stop(signal) {
+async function stop(signal) {
+  if (isStopping) {
+    return;
+  }
+
   isStopping = true;
 
   if (timer) {
@@ -111,16 +116,24 @@ function stop(signal) {
 
   console.log(`Worker stopping after ${signal}`);
 
-  if (!isRunning) {
-    process.exit(0);
+  const forceExit = setTimeout(() => {
+    console.error('Worker shutdown deadline reached');
+    process.exit(1);
+  }, 30000);
+  forceExit.unref();
+
+  while (isRunning) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  const waitForCurrentJob = setInterval(() => {
-    if (!isRunning) {
-      clearInterval(waitForCurrentJob);
-      process.exit(0);
-    }
-  }, 100);
+  try {
+    await pool.end();
+  } catch (error) {
+    console.error('Worker database shutdown failed:', safeErrorForLog(error));
+    process.exitCode = 1;
+  } finally {
+    clearTimeout(forceExit);
+  }
 }
 
 validateFtpUploadStartupEnv();
@@ -144,8 +157,12 @@ console.log(
   })
 );
 
-process.on('SIGINT', () => stop('SIGINT'));
-process.on('SIGTERM', () => stop('SIGTERM'));
+process.on('SIGINT', () => {
+  void stop('SIGINT');
+});
+process.on('SIGTERM', () => {
+  void stop('SIGTERM');
+});
 
 await runRecoveryCycle('startup');
 timer = setInterval(tick, POLL_INTERVAL_MS);

@@ -151,12 +151,23 @@ export async function findShopifyUpdateTaskByIdempotencyKey(
   return normalizeShopifyUpdateTask(rows[0]);
 }
 
-export async function listShopifyUpdateTasks({ limit, offset } = {}) {
+export async function listShopifyUpdateTasks({ orderId, limit, offset } = {}) {
   const pagination = normalizePagination(limit, offset);
+  const params = [];
+  const whereSql =
+    orderId !== undefined && orderId !== null
+      ? ' WHERE order_id = ?'
+      : '';
+
+  if (whereSql) {
+    params.push(orderId);
+  }
+
   const [rows] = await pool.execute(
-    `SELECT * FROM shopify_update_tasks
+    `SELECT * FROM shopify_update_tasks${whereSql}
     ORDER BY created_at DESC
-    LIMIT ${pagination.limit} OFFSET ${pagination.offset}`
+    LIMIT ${pagination.limit} OFFSET ${pagination.offset}`,
+    params
   );
 
   return rows.map(normalizeShopifyUpdateTask);

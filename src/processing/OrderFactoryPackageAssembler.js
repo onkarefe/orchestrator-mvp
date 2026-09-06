@@ -296,6 +296,170 @@ async function pathExists(filePath) {
   }
 }
 
+function packagePositions(positions) {
+  return positions.map((position) => ({
+    source_position: position.sourcePosition,
+    shopify_line_item_id: position.shopifyLineItemId,
+    sku: position.sku,
+    quantity: position.quantity,
+    job_id: position.jobId,
+    artifact_id: position.artifactId,
+    panels: position.panelFiles.map((panel) => ({
+      file_name: panel.fileName,
+      width_mm: panel.widthMm,
+      height_mm: panel.heightMm,
+    })),
+  }));
+}
+
+async function reconcileExistingPackageDirectory({
+  order,
+  positions,
+  finalDir,
+  packageParent,
+  orderNumber,
+}) {
+  const realFinalDir = await fs.realpath(finalDir);
+
+  if (
+    path.resolve(realFinalDir) !== path.resolve(finalDir) ||
+    !isPathInside(realFinalDir, packageParent)
+  ) {
+    throw new Error('order_factory_package_orphan_path_ambiguous');
+  }
+
+  const manifestPath = path.join(finalDir, 'manifest.json');
+  let manifest;
+
+  try {
+    manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  } catch {
+    throw new Error('order_factory_package_orphan_manifest_invalid');
+  }
+
+  const expectedPositions = packagePositions(positions);
+
+  if (
+    manifest?.schema !== ORDER_FACTORY_PACKAGE_SCHEMA ||
+    manifest?.version !== 1 ||
+    String(manifest?.order?.id) !== String(order.id) ||
+    String(manifest?.order?.shopify_order_id) !==
+      String(order.shopify_order_id) ||
+    manifest?.order?.order_number !== orderNumber ||
+    manifest?.validation?.ok !== true ||
+    manifest?.validation?.validationStatus !== 'passed' ||
+    JSON.stringify(manifest?.contents?.positions) !==
+      JSON.stringify(expectedPositions)
+  ) {
+    throw new Error('order_factory_package_orphan_identity_mismatch');
+  }
+
+  const xmlFileName = `${orderNumber}.xml`;
+  const expectedNames = [
+    ...positions.flatMap((position) =>
+      position.panelFiles.map((panel) => panel.fileName)
+    ),
+    xmlFileName,
+  ];
+  const entries = Array.isArray(manifest?.contents?.files)
+    ? manifest.contents.files
+    : [];
+
+  if (
+    manifest?.contents?.xml_file_name !== xmlFileName ||
+    Number(manifest?.contents?.file_count) !== expectedNames.length ||
+    Number(manifest?.contents?.pdf_count) !== expectedNames.length - 1 ||
+    Number(manifest?.contents?.position_count) !== positions.length ||
+    entries.length !== expectedNames.length ||
+    JSON.stringify(entries.map((entry) => entry?.name)) !==
+      JSON.stringify(expectedNames)
+  ) {
+    throw new Error('order_factory_package_orphan_file_set_mismatch');
+  }
+
+  let totalSizeBytes = 0;
+
+  for (const entry of entries) {
+    const fileName = String(entry?.name ?? '');
+    const expectedPath = path.resolve(finalDir, fileName);
+
+    if (
+      !fileName ||
+      path.basename(fileName) !== fileName ||
+      path.resolve(String(entry?.source_path ?? '')) !== expectedPath ||
+      !isPathInside(expectedPath, finalDir)
+    ) {
+      throw new Error('order_factory_package_orphan_file_path_mismatch');
+    }
+
+    let realFilePath;
+    let stat;
+
+    try {
+      realFilePath = await fs.realpath(expectedPath);
+      stat = await fs.stat(realFilePath);
+    } catch {
+      throw new Error('order_factory_package_orphan_file_missing');
+    }
+
+    if (
+      !stat.isFile() ||
+      path.resolve(realFilePath) !== expectedPath ||
+      Number(entry?.size_bytes) !== stat.size ||
+      (await calculateFileSha256(realFilePath)) !== entry?.checksum_sha256
+    ) {
+      throw new Error('order_factory_package_orphan_file_identity_mismatch');
+    }
+
+    totalSizeBytes += stat.size;
+  }
+
+  const expectedXml = `${buildOrderXml({
+    order,
+    shopifyOrderId: order.shopify_order_id,
+    positions: positions.map((position) => ({
+      sku: position.sku,
+      quantity: position.quantity,
+      panelFiles: position.panelFiles,
+    })),
+  })}\n`;
+  const xmlPath = path.join(finalDir, xmlFileName);
+
+  if ((await fs.readFile(xmlPath, 'utf8')) !== expectedXml) {
+    throw new Error('order_factory_package_orphan_xml_mismatch');
+  }
+
+  const contentChecksum = crypto
+    .createHash('sha256')
+    .update(
+      entries
+        .map((entry) => `${entry.name}:${entry.checksum_sha256}`)
+        .join('\n')
+    )
+    .digest('hex');
+
+  if (contentChecksum !== manifest?.package?.content_checksum_sha256) {
+    throw new Error('order_factory_package_orphan_checksum_mismatch');
+  }
+
+  const xmlEntry = entries[entries.length - 1];
+
+  return {
+    orderNumber,
+    packageDir: finalDir,
+    manifestPath,
+    xmlFileName,
+    xmlPath,
+    xmlChecksum: xmlEntry.checksum_sha256,
+    xmlSizeBytes: Number(xmlEntry.size_bytes),
+    contentChecksum,
+    fileCount: entries.length,
+    totalSizeBytes,
+    manifest,
+    recoveredExisting: true,
+  };
+}
+
 export async function assembleOrderFactoryPackage({
   order,
   positions,
@@ -327,7 +491,13 @@ export async function assembleOrderFactoryPackage({
   }
 
   if (await pathExists(finalDir)) {
-    throw new Error('order_factory_package_path_already_exists');
+    return reconcileExistingPackageDirectory({
+      order,
+      positions,
+      finalDir,
+      packageParent: realPackageParent,
+      orderNumber,
+    });
   }
 
   const stagingDir = await fs.mkdtemp(path.join(packageParent, '.staging-'));
@@ -447,6 +617,7 @@ export async function assembleOrderFactoryPackage({
       fileCount: manifestFiles.length,
       totalSizeBytes,
       manifest,
+      recoveredExisting: false,
     };
   } catch (error) {
     if (isPathInside(stagingDir, packageParent)) {

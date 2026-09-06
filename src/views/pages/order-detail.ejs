@@ -93,6 +93,56 @@
     </section>
   </div>
 
+  <section class='table-card'>
+    <div class='table-card-header'>
+      <div>
+        <h2>Production chain</h2>
+        <p class='muted'>Read-only state assembled from persisted production records.</p>
+      </div>
+    </div>
+    <div class='table-scroll'>
+      <table class='data-table'>
+        <thead><tr><th>Stage</th><th>Records</th><th>Current state</th></tr></thead>
+        <tbody>
+          <% monitoring.stages.forEach((stage) => { %>
+            <tr>
+              <td><%= stage.name %></td>
+              <td><%= stage.count %></td>
+              <td><span class='status-badge <%= statusClass(stage.status) %>'><%= display(stage.status) %></span></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class='card'>
+    <div class='card-header'><div><p class='section-label'>Operations</p><h2>Anomalies</h2></div></div>
+    <% if (monitoring.anomalies.length === 0) { %>
+      <p class='muted'>No production-chain anomaly detected from current persisted state.</p>
+    <% } else { %>
+      <dl class='meta-grid meta-grid-single'>
+        <% monitoring.anomalies.forEach((anomaly) => { %>
+          <div class='meta-item'>
+            <dt class='mono'><%= anomaly.code %></dt>
+            <dd><span class='status-badge <%= statusClass(anomaly.severity) %>'><%= anomaly.severity %></span> <%= anomaly.message %></dd>
+          </div>
+        <% }) %>
+      </dl>
+    <% } %>
+  </section>
+
+  <section class='table-card'>
+    <div class='table-card-header'><div><h2>Line-item routing</h2><p class='muted'><%= lineItems.length %> persisted line items</p></div></div>
+    <div class='table-scroll'><table class='data-table'>
+      <thead><tr><th>Position</th><th>Line item</th><th>SKU</th><th>Qty</th><th>Classification</th><th>Routing</th><th>Reason</th></tr></thead>
+      <tbody>
+        <% lineItems.forEach((lineItem) => { %><tr><td><%= lineItem.source_position %></td><td class='mono'><%= display(lineItem.shopify_line_item_id) %></td><td class='mono'><%= display(lineItem.sku) %></td><td><%= display(lineItem.quantity) %></td><td><%= display(lineItem.classification) %></td><td><%= display(lineItem.routing_state) %></td><td><%= display(lineItem.routing_reason) %></td></tr><% }) %>
+        <% if (lineItems.length === 0) { %><tr><td class='empty-state' colspan='7'>No routed line items found.</td></tr><% } %>
+      </tbody>
+    </table></div>
+  </section>
+
   <section class="table-card">
     <div class="table-card-header">
       <div>
@@ -141,6 +191,74 @@
 
   <section class="table-card">
     <div class="table-card-header">
+      <div>
+        <h2>Shopify intake webhooks</h2>
+        <p class='muted'><%= webhooks.length %> authenticated/deduplicated webhook records</p>
+      </div>
+    </div>
+    <div class='table-scroll'><table class='data-table'>
+      <thead><tr><th>ID</th><th>Topic</th><th>Processing</th><th>Error</th><th>Received</th></tr></thead>
+      <tbody>
+        <% webhooks.forEach((webhook) => { %><tr><td class='mono'>#<%= webhook.id %></td><td><%= display(webhook.topic) %></td><td><%= display(webhook.processing_status) %></td><td><%= display(webhook.error_message) %></td><td><%= display(webhook.received_at || webhook.created_at) %></td></tr><% }) %>
+        <% if (webhooks.length === 0) { %><tr><td class='empty-state' colspan='5'>No persisted Shopify webhook records found.</td></tr><% } %>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class='table-card'>
+    <div class='table-card-header'><div><h2>Artifacts</h2><p class='muted'><%= artifacts.length %> persisted artifacts</p></div></div>
+    <div class='table-scroll'><table class='data-table'>
+      <thead><tr><th>ID</th><th>Type</th><th>File</th><th>Status</th><th>Validation</th><th>Created</th></tr></thead>
+      <tbody>
+        <% artifacts.forEach((artifact) => { %><tr><td class='mono'>#<%= artifact.id %></td><td><%= display(artifact.type) %></td><td class='mono'><%= display(artifact.file_name) %></td><td><%= display(artifact.status) %></td><td><%= display(artifact.validation_status) %></td><td><%= display(artifact.created_at) %></td></tr><% }) %>
+        <% if (artifacts.length === 0) { %><tr><td class='empty-state' colspan='6'>No artifacts found.</td></tr><% } %>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class='card'>
+    <div class='card-header'><div><p class='section-label'>Factory handoff</p><h2>Package, FTP, and NEXO</h2></div></div>
+    <dl class='meta-grid'>
+      <div class='meta-item'><dt>Package ID</dt><dd class='mono'><%= orderPackage ? '#' + orderPackage.id : '—' %></dd></div>
+      <div class='meta-item'><dt>Order number</dt><dd class='mono'><%= display(orderPackage?.order_number) %></dd></div>
+      <div class='meta-item'><dt>Package status</dt><dd><%= display(orderPackage?.status) %></dd></div>
+      <div class='meta-item'><dt>Content checksum</dt><dd class='mono'><%= display(orderPackage?.content_checksum) %></dd></div>
+      <div class='meta-item'><dt>FTP task</dt><dd class='mono'><%= uploadTask ? '#' + uploadTask.id : '—' %></dd></div>
+      <div class='meta-item'><dt>FTP status</dt><dd><%= display(uploadTask?.status) %></dd></div>
+      <div class='meta-item'><dt>FTP attempts</dt><dd><%= uploadTask ? display(uploadTask.attempt_count) + ' / ' + display(uploadTask.max_attempts) : '—' %></dd></div>
+      <div class='meta-item'><dt>FTP error</dt><dd><%= display(uploadTask?.last_error || uploadTask?.suppressed_reason) %></dd></div>
+      <div class='meta-item'><dt>FTP locked</dt><dd><%= display(uploadTask?.locked_at) %></dd></div>
+      <div class='meta-item'><dt>FTP uploaded</dt><dd><%= display(uploadTask?.uploaded_at) %></dd></div>
+      <div class='meta-item'><dt>NEXO order ID</dt><dd class='mono'><%= display(orderPackage?.nexo_order_id || order.factory_order_id) %></dd></div>
+      <div class='meta-item'><dt>NEXO status</dt><dd><%= display(orderPackage?.factory_status || order.factory_status) %></dd></div>
+    </dl>
+    <details class='disclosure'><summary><strong>FTP progress</strong><span class='disclosure-hint'>Show persisted progress</span></summary><pre class='code-panel'><%= JSON.stringify(uploadTask?.uploaded_files_json || [], null, 2) %></pre></details>
+  </section>
+
+  <section class='table-card'>
+    <div class='table-card-header'><div><h2>NEXO callbacks</h2><p class='muted'><%= factoryCallbacks.length %> callback records</p></div></div>
+    <div class='table-scroll'><table class='data-table'>
+      <thead><tr><th>ID</th><th>External ID</th><th>Status</th><th>Processing</th><th>Error</th><th>Received</th></tr></thead>
+      <tbody>
+        <% factoryCallbacks.forEach((callback) => { %><tr><td class='mono'>#<%= callback.id %></td><td class='mono'><%= display(callback.factory_order_id) %></td><td><%= display(callback.status) %></td><td><%= display(callback.processing_status) %></td><td><%= display(callback.error_message) %></td><td><%= display(callback.received_at) %></td></tr><% }) %>
+        <% if (factoryCallbacks.length === 0) { %><tr><td class='empty-state' colspan='6'>No NEXO callback records found.</td></tr><% } %>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class='table-card'>
+    <div class='table-card-header'><div><h2>Shopify fulfillment/update tasks</h2><p class='muted'><%= shopifyUpdateTasks.length %> task records</p></div></div>
+    <div class='table-scroll'><table class='data-table'>
+      <thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Attempts</th><th>External ID</th><th>Error</th><th>Updated</th></tr></thead>
+      <tbody>
+        <% shopifyUpdateTasks.forEach((task) => { %><tr><td class='mono'>#<%= task.id %></td><td><%= display(task.task_type) %></td><td><%= display(task.status) %></td><td><%= display(task.attempt_count) %> / <%= display(task.max_attempts) %></td><td class='mono'><%= display(task.external_id) %></td><td><%= display(task.last_error) %></td><td><%= display(task.updated_at) %></td></tr><% }) %>
+        <% if (shopifyUpdateTasks.length === 0) { %><tr><td class='empty-state' colspan='7'>No Shopify update tasks found.</td></tr><% } %>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class='table-card'>
+    <div class='table-card-header'>
       <div>
         <h2>Activity log</h2>
         <p class="muted"><%= logs.length %> event<%= logs.length === 1 ? '' : 's' %></p>

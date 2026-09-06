@@ -5,9 +5,11 @@ import {
   claimFailedWebhookRetry,
   getWebhookByDeliveryId,
   markWebhookFailed,
+  processShopifyLifecycleWebhook,
   processWebhookOrder,
   recordWebhook,
 } from '../../services/WebhookService.js';
+import { getShopifyOrderIdForLifecycleEvent } from '../../services/ShopifyLifecycleService.js';
 import { logWarning } from '../../services/LogService.js';
 import { redact, safeErrorForLog } from '../../utils/redact.js';
 import { verifyShopifyWebhookHmac } from '../../utils/shopifyHmac.js';
@@ -65,6 +67,8 @@ async function recordRejectedWebhook({
   rawBody,
   hmacValid,
   errorMessage,
+  topic,
+  getShopifyOrderId,
   runtime,
 }) {
   if (!runtime.config.SHOPIFY_WEBHOOK_STORE_INVALID) {
@@ -82,8 +86,8 @@ async function recordRejectedWebhook({
   try {
     return await runtime.recordWebhook({
       provider: 'shopify',
-      topic: 'orders/paid',
-      shopifyOrderId: payload?.id ?? null,
+      topic,
+      shopifyOrderId: getShopifyOrderId(payload),
       deliveryId: getShopifyDeliveryId(req),
       status: WEBHOOK_PROCESSING_STATUSES.FAILED,
       processingStatus:
@@ -111,6 +115,7 @@ const defaultRuntime = Object.freeze({
   logWarning,
   markWebhookFailed,
   processWebhookOrder,
+  processShopifyLifecycleWebhook,
   recordWebhook,
   verifyShopifyWebhookHmac,
 });
@@ -118,7 +123,12 @@ const defaultRuntime = Object.freeze({
 export async function handleOrdersPaidWebhook(
   req,
   res,
-  runtime = defaultRuntime
+  runtime = defaultRuntime,
+  {
+    topic = 'orders/paid',
+    getShopifyOrderId = (payload) => payload?.id ?? null,
+    processWebhook = runtime.processWebhookOrder,
+  } = {}
 ) {
   let webhook = null;
   const rawBody = getRawBody(req);
@@ -139,6 +149,8 @@ export async function handleOrdersPaidWebhook(
       rawBody,
       hmacValid: false,
       errorMessage: 'Invalid Shopify webhook HMAC',
+      topic,
+      getShopifyOrderId,
       runtime,
     });
 
@@ -172,6 +184,8 @@ export async function handleOrdersPaidWebhook(
       rawBody,
       hmacValid: hmacWasChecked ? hmacValid : null,
       errorMessage: 'Invalid JSON payload',
+      topic,
+      getShopifyOrderId,
       runtime,
     });
 
@@ -255,8 +269,8 @@ export async function handleOrdersPaidWebhook(
     try {
       webhook = await runtime.recordWebhook({
         provider: 'shopify',
-        topic: 'orders/paid',
-        shopifyOrderId: payload?.id ?? null,
+        topic,
+        shopifyOrderId: getShopifyOrderId(payload),
         deliveryId,
         status: 'received',
         processingStatus: WEBHOOK_PROCESSING_STATUSES.PENDING,
@@ -293,7 +307,18 @@ export async function handleOrdersPaidWebhook(
   }
 
   try {
-    const result = await runtime.processWebhookOrder(webhook.id);
+    const result = await processWebhook(webhook.id);
+
+    if (topic !== 'orders/paid') {
+      res.status(200).json({
+        ok: true,
+        status: 'processed',
+        webhookId: webhook.id,
+        orderId: result.order?.id ?? null,
+        disposition: result.disposition,
+      });
+      return;
+    }
 
     res.status(200).json({
       ok: true,
@@ -322,6 +347,35 @@ export function recordOrdersPaidWebhook(req, res) {
   return handleOrdersPaidWebhook(req, res);
 }
 
+export function handleShopifyLifecycleWebhook(
+  req,
+  res,
+  topic,
+  runtime = defaultRuntime
+) {
+  return handleOrdersPaidWebhook(req, res, runtime, {
+    topic,
+    getShopifyOrderId: (payload) =>
+      getShopifyOrderIdForLifecycleEvent(topic, payload),
+    processWebhook: runtime.processShopifyLifecycleWebhook,
+  });
+}
+
+export function recordOrdersCancelledWebhook(req, res) {
+  return handleShopifyLifecycleWebhook(req, res, 'orders/cancelled');
+}
+
+export function recordOrdersUpdatedWebhook(req, res) {
+  return handleShopifyLifecycleWebhook(req, res, 'orders/updated');
+}
+
+export function recordRefundsCreateWebhook(req, res) {
+  return handleShopifyLifecycleWebhook(req, res, 'refunds/create');
+}
+
 export default {
   recordOrdersPaidWebhook,
+  recordOrdersCancelledWebhook,
+  recordOrdersUpdatedWebhook,
+  recordRefundsCreateWebhook,
 };

@@ -172,6 +172,27 @@ try {
   const oneXml = await fs.readFile(oneAssembly.xmlPath, 'utf8');
   assert.equal((oneXml.match(/<position>/g) ?? []).length, 1);
   assert.equal(oneAssembly.orderNumber, `WANDINI-S${oneOrder.shopify_order_id}`);
+  const recoveredOrphan = await assembleOrderFactoryPackage({
+    order: oneOrder,
+    positions: oneReady.positions,
+    artifactsRoot,
+  });
+  assert.equal(recoveredOrphan.recoveredExisting, true);
+  assert.equal(recoveredOrphan.contentChecksum, oneAssembly.contentChecksum);
+  await assert.rejects(
+    assembleOrderFactoryPackage({
+      order: oneOrder,
+      positions: [
+        { ...oneReady.positions[0], sku: 'MISMATCHED-ORPHAN-SKU' },
+      ],
+      artifactsRoot,
+    }),
+    /order_factory_package_orphan_identity_mismatch/
+  );
+  assert.equal(
+    (await fs.stat(oneAssembly.packageDir)).isDirectory(),
+    true
+  );
   let taskCreateCount = 0;
   const oneTask = await ensureOrderFactoryUploadTask({
     order: oneOrder,
