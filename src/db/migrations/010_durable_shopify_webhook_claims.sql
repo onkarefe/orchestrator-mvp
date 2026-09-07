@@ -1,5 +1,5 @@
 -- Durable, bounded Shopify webhook processing claims.
--- Additive only; existing rows remain recoverable with safe defaults.
+-- Additive only, existing rows remain recoverable with safe defaults.
 
 SET @migration_sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'webhooks' AND COLUMN_NAME = 'attempt_count') = 0,

@@ -205,7 +205,7 @@ const env = {
     3000,
     { min: 1000 }
   ),
-  FACTORY_CALLBACK_ENABLED: booleanFromEnv('FACTORY_CALLBACK_ENABLED', true),
+  FACTORY_CALLBACK_ENABLED: booleanFromEnv('FACTORY_CALLBACK_ENABLED', false),
   FACTORY_CALLBACK_AUTH_ENABLED: booleanFromEnv(
     'FACTORY_CALLBACK_AUTH_ENABLED',
     true
