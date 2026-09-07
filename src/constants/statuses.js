@@ -39,6 +39,7 @@ export const WEBHOOK_PROCESSING_STATUSES = Object.freeze({
   PROCESSED: 'processed',
   DUPLICATE: 'duplicate',
   INVALID_HMAC: 'invalid_hmac',
+  REJECTED: 'rejected',
   FAILED: 'failed',
 });
 

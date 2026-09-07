@@ -62,6 +62,18 @@
         <dd class="mono"><%= display(webhook.duplicate_of_id) %></dd>
       </div>
       <div class="meta-item">
+        <dt>Attempt count</dt>
+        <dd><%= display(webhook.attempt_count) %> / <%= display(webhook.max_attempts) %></dd>
+      </div>
+      <div class='meta-item'>
+        <dt>Locked at</dt>
+        <dd><%= display(webhook.locked_at) %></dd>
+      </div>
+      <div class='meta-item'>
+        <dt>Locked by</dt>
+        <dd class='mono'><%= display(webhook.locked_by) %></dd>
+      </div>
+      <div class='meta-item'>
         <dt>Error message</dt>
         <dd><%= display(webhook.error_message) %></dd>
       </div>

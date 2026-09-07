@@ -15,6 +15,10 @@ import {
 import { LINE_ITEM_CLASSIFICATIONS } from '../constants/lineItemRouting.js';
 import { createConfiguratorJobFromLineItem } from './JobService.js';
 import { classifyShopifyLineItem } from './LineItemRoutingService.js';
+import {
+  MANUAL_REVIEW_REASONS,
+  validateShopifyShippingAddress,
+} from './PreflightValidationService.js';
 import { logError, logInfo } from './LogService.js';
 
 const ORDER_BLOCKED_BY_MANUAL_REVIEW_REASON =
@@ -42,11 +46,32 @@ async function writeInfoLogs(logEvents) {
   }
 }
 
+export function getOrderSafetyManualReviewReasons(payload) {
+  const reasons = new Set();
+  const shippingValidation = validateShopifyShippingAddress(payload);
+
+  if (!shippingValidation.ok) {
+    reasons.add(shippingValidation.reason);
+  }
+
+  for (const lineItem of Array.isArray(payload?.line_items)
+    ? payload.line_items
+    : []) {
+    if (typeof lineItem?.sku !== 'string' || !lineItem.sku.trim()) {
+      reasons.add(MANUAL_REVIEW_REASONS.MISSING_SKU);
+    }
+  }
+
+  return Array.from(reasons);
+}
+
 export function getOrderPreflightDisposition({
   pendingJobs = [],
   manualReviewJobs = [],
+  manualReviewReasons = [],
 } = {}) {
-  const requiresManualReview = manualReviewJobs.length > 0;
+  const requiresManualReview =
+    manualReviewJobs.length > 0 || manualReviewReasons.length > 0;
 
   return {
     requiresManualReview,
@@ -135,8 +160,25 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
     const skippedDuplicateJobs = [];
     const manualReviewJobs = [];
     const lineItemRecords = [];
-    const manualReviewReasons = new Set();
+    const manualReviewReasons = new Set(
+      getOrderSafetyManualReviewReasons(payload)
+    );
     const lineItems = Array.isArray(payload.line_items) ? payload.line_items : [];
+    const shippingValidation = validateShopifyShippingAddress(payload);
+
+    if (!shippingValidation.ok) {
+      manualReviewReasons.add(shippingValidation.reason);
+      logEvents.push({
+        scopeType: 'order',
+        orderId: order.id,
+        step: 'order.shipping_address_manual_review',
+        message: 'Shopify shipping address requires manual review',
+        detailsJson: {
+          reason: shippingValidation.reason,
+          invalidFields: shippingValidation.errors,
+        },
+      });
+    }
 
     for (const [sourcePosition, lineItem] of lineItems.entries()) {
       const routing = classifyShopifyLineItem(lineItem);
@@ -176,6 +218,21 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
           routingReason: persisted.lineItem.routing_reason,
         },
       });
+
+      if (!persisted.lineItem.sku) {
+        manualReviewReasons.add(MANUAL_REVIEW_REASONS.MISSING_SKU);
+        logEvents.push({
+          scopeType: 'order',
+          orderId: order.id,
+          step: 'order.line_item_missing_sku',
+          message: 'Shopify line item without SKU requires manual review',
+          detailsJson: {
+            shopifyLineItemId: persisted.lineItem.shopify_line_item_id,
+            sourcePosition,
+            reason: MANUAL_REVIEW_REASONS.MISSING_SKU,
+          },
+        });
+      }
 
       if (routing.classification !== LINE_ITEM_CLASSIFICATIONS.WALLPAPER) {
         continue;
@@ -253,6 +310,7 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
     const preflightDisposition = getOrderPreflightDisposition({
       pendingJobs: jobs,
       manualReviewJobs,
+      manualReviewReasons: Array.from(manualReviewReasons),
     });
 
     if (preflightDisposition.requiresManualReview) {
@@ -292,7 +350,7 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
         scopeType: 'order',
         orderId: order.id,
         step: 'order.manual_review',
-        message: 'Order contains configurable items requiring manual review',
+        message: 'Order requires manual review before production',
         detailsJson: {
           shopifyOrderId,
           manualReviewJobCount: manualReviewJobs.length,
@@ -387,4 +445,5 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
 export default {
   createOrderAndJobsFromShopifyPayload,
   getOrderPreflightDisposition,
+  getOrderSafetyManualReviewReasons,
 };

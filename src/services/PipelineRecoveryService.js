@@ -3,10 +3,20 @@ import {
   listOrdersMissingFactoryPackage,
   listOrdersWithPackageMissingFactoryTask,
 } from '../models/PipelineRecoveryModel.js';
+import {
+  listRecoverableWebhookIds,
+  markExhaustedStaleWebhooksFailed,
+} from '../models/WebhookModel.js';
 import { ensureOrderFactoryPackage } from './OrderFactoryPackageService.js';
 import { releaseStaleProcessingJobs } from './JobProcessingService.js';
 import { logError, logInfo, logWarning } from './LogService.js';
 import { safeErrorForLog } from '../utils/redact.js';
+import {
+  claimWebhookProcessing,
+  getWebhookWorkerId,
+  markWebhookFailed,
+  processWebhookOrder,
+} from './WebhookService.js';
 
 function uniqueOrderIds(...groups) {
   return [
@@ -17,6 +27,105 @@ function uniqueOrderIds(...groups) {
         .filter((value) => Number.isSafeInteger(value) && value > 0)
     ),
   ];
+}
+
+export async function recoverShopifyWebhooks({
+  config = env,
+  runtime = {},
+} = {}) {
+  const listCandidates =
+    runtime.listRecoverableWebhookIds ?? listRecoverableWebhookIds;
+  const markExhausted =
+    runtime.markExhaustedStaleWebhooksFailed ??
+    markExhaustedStaleWebhooksFailed;
+  const claimWebhook =
+    runtime.claimWebhookProcessing ?? claimWebhookProcessing;
+  const processClaimedWebhook =
+    runtime.processWebhookOrder ?? processWebhookOrder;
+  const failClaimedWebhook =
+    runtime.markWebhookFailed ?? markWebhookFailed;
+  const writeInfoLog = runtime.logInfo ?? logInfo;
+  const writeErrorLog = runtime.logError ?? logError;
+  const workerId =
+    runtime.webhookWorkerId ?? getWebhookWorkerId('webhook-recovery');
+  const claimOptions = {
+    workerId,
+    maxAttempts: config.SHOPIFY_WEBHOOK_MAX_ATTEMPTS,
+    staleLockMinutes: config.SHOPIFY_WEBHOOK_STALE_LOCK_MINUTES,
+  };
+  const exhausted = await markExhausted({
+    maxAttempts: claimOptions.maxAttempts,
+    staleLockMinutes: claimOptions.staleLockMinutes,
+  });
+  const webhookIds = await listCandidates({
+    limit: config.WORKER_RECOVERY_BATCH_SIZE,
+    maxAttempts: claimOptions.maxAttempts,
+    staleLockMinutes: claimOptions.staleLockMinutes,
+  });
+  const summary = {
+    candidates: webhookIds.length,
+    recovered: 0,
+    duplicates: 0,
+    skipped: 0,
+    failed: 0,
+    exhausted,
+  };
+
+  for (const webhookId of webhookIds) {
+    let webhook;
+
+    try {
+      webhook = await claimWebhook(webhookId, claimOptions);
+
+      if (!webhook) {
+        summary.skipped += 1;
+        continue;
+      }
+
+      const result = await processClaimedWebhook(webhook.id, { workerId });
+      summary.recovered += 1;
+      summary.duplicates += result.duplicate ? 1 : 0;
+
+      try {
+        await writeInfoLog({
+          scopeType: 'system',
+          step: 'recovery.shopify_webhook_recovered',
+          message: 'Shopify paid webhook processing recovered',
+          detailsJson: {
+            webhookId: webhook.id,
+            duplicate: Boolean(result.duplicate),
+            orderId: result.order?.id ?? null,
+          },
+        });
+      } catch {
+        // The durable webhook disposition is authoritative; an auxiliary log
+        // failure must not turn a completed recovery into a processing retry.
+      }
+    } catch (error) {
+      summary.failed += 1;
+
+      if (webhook) {
+        try {
+          await failClaimedWebhook(webhook.id, error.message, { workerId });
+        } catch {
+          // The error log below records the recovery failure even when the
+          // claim was concurrently lost before its failure disposition.
+        }
+      }
+
+      await writeErrorLog({
+        scopeType: 'system',
+        step: 'recovery.shopify_webhook_failed',
+        message: 'Shopify paid webhook recovery failed safely',
+        detailsJson: {
+          webhookId,
+          error: safeErrorForLog(error),
+        },
+      });
+    }
+  }
+
+  return summary;
 }
 
 export async function reconcileFactoryOrders({
@@ -150,6 +259,8 @@ export async function runPipelineRecovery({
     runtime.reconcileFactoryOrders ?? reconcileFactoryOrders;
   const writeInfoLog = runtime.logInfo ?? logInfo;
   const staleJobs = await releaseStaleJobs();
+  const recoverWebhooks =
+    runtime.recoverShopifyWebhooks ?? recoverShopifyWebhooks;
 
   if (staleJobs.requeued > 0 || staleJobs.failed > 0) {
     await writeInfoLog({
@@ -163,12 +274,14 @@ export async function runPipelineRecovery({
     });
   }
 
+  const webhooks = await recoverWebhooks({ config, runtime });
   const factory = await reconcileOrders({ config, runtime });
 
-  return { staleJobs, factory };
+  return { staleJobs, webhooks, factory };
 }
 
 export default {
+  recoverShopifyWebhooks,
   reconcileFactoryOrders,
   runPipelineRecovery,
 };

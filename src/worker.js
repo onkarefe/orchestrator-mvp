@@ -1,6 +1,7 @@
 import {
   getSafeStartupConfigSummary,
   validateFtpUploadStartupEnv,
+  validateShopifyWebhookStartupEnv,
   validateWallpaperSkuStartupEnv,
 } from './config/startupValidation.js';
 import env from './config/env.js';
@@ -36,6 +37,9 @@ async function runRecoveryCycle(trigger) {
     if (
       result.staleJobs.requeued > 0 ||
       result.staleJobs.failed > 0 ||
+      result.webhooks.recovered > 0 ||
+      result.webhooks.failed > 0 ||
+      result.webhooks.exhausted > 0 ||
       result.factory.packagesReconciled > 0 ||
       result.factory.tasksReconciled > 0 ||
       result.factory.failed > 0
@@ -137,6 +141,7 @@ async function stop(signal) {
 }
 
 validateFtpUploadStartupEnv();
+validateShopifyWebhookStartupEnv();
 validateWallpaperSkuStartupEnv();
 
 const startupConfig = getSafeStartupConfigSummary();

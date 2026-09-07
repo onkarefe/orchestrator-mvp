@@ -2,12 +2,22 @@ import {
   LINE_ITEM_CLASSIFICATIONS,
   LINE_ITEM_ROUTING_STATES,
 } from '../constants/lineItemRouting.js';
+import { ORDER_STATUSES } from '../constants/statuses.js';
+import {
+  MANUAL_REVIEW_REASONS,
+  validateShopifyShippingAddress,
+} from './PreflightValidationService.js';
 
 export const FACTORY_DISPATCH_BLOCK_REASONS = Object.freeze({
   CLASSIFICATION_INCOMPLETE: 'line_item_classification_incomplete',
   UNKNOWN_LINE_ITEM: 'order_contains_unknown_line_item',
   ACCESSORY_LINE_ITEM: 'order_contains_accessory_line_item',
   BLOCKED_LINE_ITEM: 'order_contains_blocked_line_item',
+  ORDER_MANUAL_REVIEW: 'order_requires_manual_review',
+  MISSING_SHIPPING_ADDRESS:
+    MANUAL_REVIEW_REASONS.MISSING_SHIPPING_ADDRESS,
+  INVALID_SHIPPING_ADDRESS:
+    MANUAL_REVIEW_REASONS.INVALID_SHIPPING_ADDRESS,
 });
 
 function normalizedIdentity(value) {
@@ -17,6 +27,24 @@ function normalizedIdentity(value) {
 }
 
 export function evaluateFactoryDispatchGate({ order, lineItems } = {}) {
+  const shippingValidation = validateShopifyShippingAddress(
+    order?.raw_payload_json
+  );
+
+  if (!shippingValidation.ok) {
+    return {
+      allowed: false,
+      reason: shippingValidation.reason,
+    };
+  }
+
+  if (order?.status === ORDER_STATUSES.MANUAL_REVIEW) {
+    return {
+      allowed: false,
+      reason: FACTORY_DISPATCH_BLOCK_REASONS.ORDER_MANUAL_REVIEW,
+    };
+  }
+
   const sourceLineItems = order?.raw_payload_json?.line_items;
 
   if (!Array.isArray(sourceLineItems) || !Array.isArray(lineItems)) {

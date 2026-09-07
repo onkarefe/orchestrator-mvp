@@ -127,6 +127,14 @@ const env = {
     'SHOPIFY_WEBHOOK_STORE_INVALID',
     true
   ),
+  SHOPIFY_WEBHOOK_MAX_ATTEMPTS: positiveIntegerFromEnv(
+    'SHOPIFY_WEBHOOK_MAX_ATTEMPTS',
+    3
+  ),
+  SHOPIFY_WEBHOOK_STALE_LOCK_MINUTES: positiveIntegerFromEnv(
+    'SHOPIFY_WEBHOOK_STALE_LOCK_MINUTES',
+    30
+  ),
   WALLPAPER_SKUS: csvFromEnv('WALLPAPER_SKUS', []),
   ACCESSORY_SKUS: csvFromEnv('ACCESSORY_SKUS', []),
   CONFIGURATOR_MAX_OUTPUT_WIDTH_MM: positiveNumberFromEnv(

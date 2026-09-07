@@ -48,6 +48,7 @@ assert.equal(
 const startupBase = {
   WALLPAPER_SKUS: ['20-140.1-3'],
   SHOPIFY_WEBHOOK_HMAC_REQUIRED: false,
+  SHOPIFY_SHOP_DOMAIN: 'shop.myshopify.com',
   FACTORY_CALLBACK_ENABLED: false,
   NEXO_CALLBACK_ENABLED: false,
   SHOPIFY_UPDATE_EXECUTOR_ENABLED: false,
@@ -62,7 +63,16 @@ assert.throws(
   () =>
     validateServerStartupEnv({
       ...startupBase,
+      SHOPIFY_SHOP_DOMAIN: '',
+    }),
+  /SHOPIFY_SHOP_DOMAIN/
+);
+assert.throws(
+  () =>
+    validateServerStartupEnv({
+      ...startupBase,
       SHOPIFY_UPDATE_EXECUTOR_ENABLED: true,
+      SHOPIFY_SHOP_DOMAIN: '',
       SHOPIFY_ADMIN_API_VERSION: '2026-01',
     }),
   /SHOPIFY_SHOP_DOMAIN/

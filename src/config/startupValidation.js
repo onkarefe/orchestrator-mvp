@@ -100,6 +100,36 @@ export function validateWallpaperSkuStartupEnv(config = env) {
   return true;
 }
 
+export function validateShopifyWebhookStartupEnv(config = env) {
+  const errors = [];
+
+  if (
+    config.SHOPIFY_WEBHOOK_HMAC_REQUIRED &&
+    !hasConfiguredSecret(config.SHOPIFY_WEBHOOK_SECRET)
+  ) {
+    errors.push(
+      'SHOPIFY_WEBHOOK_SECRET is required when SHOPIFY_WEBHOOK_HMAC_REQUIRED=true'
+    );
+  }
+
+  if (!normalizeShopifyShopDomain(config.SHOPIFY_SHOP_DOMAIN)) {
+    errors.push(
+      'A valid SHOPIFY_SHOP_DOMAIN ending in .myshopify.com is required for Shopify webhook source validation'
+    );
+  }
+
+  if (errors.length) {
+    const error = new Error(
+      `Unsafe Shopify webhook configuration: ${errors.join('; ')}`
+    );
+    error.code = 'UNSAFE_SHOPIFY_WEBHOOK_CONFIGURATION';
+    error.validationErrors = errors;
+    throw error;
+  }
+
+  return true;
+}
+
 export function validateServerStartupEnv(config = env) {
   const errors = [];
   const allowlist = parseShopifyWriteOrderAllowlist(
@@ -116,13 +146,10 @@ export function validateServerStartupEnv(config = env) {
     errors.push(...(error.validationErrors ?? [error.message]));
   }
 
-  if (
-    config.SHOPIFY_WEBHOOK_HMAC_REQUIRED &&
-    !hasConfiguredSecret(config.SHOPIFY_WEBHOOK_SECRET)
-  ) {
-    errors.push(
-      'SHOPIFY_WEBHOOK_SECRET is required when SHOPIFY_WEBHOOK_HMAC_REQUIRED=true'
-    );
+  try {
+    validateShopifyWebhookStartupEnv(config);
+  } catch (error) {
+    errors.push(...(error.validationErrors ?? [error.message]));
   }
 
   if (
@@ -226,6 +253,10 @@ export function getSafeStartupConfigSummary(config = env) {
       config.SHOPIFY_WEBHOOK_HMAC_REQUIRED
     ),
     shopifyWebhookStoreInvalid: Boolean(config.SHOPIFY_WEBHOOK_STORE_INVALID),
+    shopifyWebhookMaxAttempts:
+      Number(config.SHOPIFY_WEBHOOK_MAX_ATTEMPTS) || 0,
+    shopifyWebhookStaleLockMinutes:
+      Number(config.SHOPIFY_WEBHOOK_STALE_LOCK_MINUTES) || 0,
     factoryCallbackEnabled: Boolean(config.FACTORY_CALLBACK_ENABLED),
     factoryCallbackAuthEnabled: Boolean(config.FACTORY_CALLBACK_AUTH_ENABLED),
     nexoCallbackEnabled: Boolean(config.NEXO_CALLBACK_ENABLED),
@@ -281,5 +312,6 @@ export default {
   getSafeStartupConfigSummary,
   validateFtpUploadStartupEnv,
   validateServerStartupEnv,
+  validateShopifyWebhookStartupEnv,
   validateWallpaperSkuStartupEnv,
 };

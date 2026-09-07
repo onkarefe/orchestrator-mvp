@@ -7,6 +7,7 @@ import {
   listOrdersWithPackageMissingFactoryTask,
 } from '../src/models/PipelineRecoveryModel.js';
 import {
+  recoverShopifyWebhooks,
   reconcileFactoryOrders,
   runPipelineRecovery,
 } from '../src/services/PipelineRecoveryService.js';
@@ -251,9 +252,21 @@ assert.deepEqual(raceHarness.counts, { packages: 1, tasks: 2 });
 
 const recoveryLogs = [];
 const recoveryResult = await runPipelineRecovery({
-  config,
+  config: {
+    ...config,
+    SHOPIFY_WEBHOOK_MAX_ATTEMPTS: 3,
+    SHOPIFY_WEBHOOK_STALE_LOCK_MINUTES: 30,
+  },
   runtime: {
     releaseStaleProcessingJobs: async () => ({ requeued: 1, failed: 0 }),
+    recoverShopifyWebhooks: async () => ({
+      candidates: 0,
+      recovered: 0,
+      duplicates: 0,
+      skipped: 0,
+      failed: 0,
+      exhausted: 0,
+    }),
     reconcileFactoryOrders: async () => ({
       candidates: 0,
       packagesReconciled: 0,
@@ -267,6 +280,93 @@ const recoveryResult = await runPipelineRecovery({
 assert.equal(recoveryResult.staleJobs.requeued, 1);
 assert.equal(recoveryLogs[0].step, 'recovery.stale_jobs_released');
 
+{
+  const recoverableIds = [201, 202];
+  const claims = [];
+  const processed = [];
+  const failed = [];
+  const webhookRecovery = await recoverShopifyWebhooks({
+    config: {
+      WORKER_RECOVERY_BATCH_SIZE: 25,
+      SHOPIFY_WEBHOOK_MAX_ATTEMPTS: 3,
+      SHOPIFY_WEBHOOK_STALE_LOCK_MINUTES: 30,
+    },
+    runtime: {
+      webhookWorkerId: 'recovery-worker',
+      markExhaustedStaleWebhooksFailed: async (options) => {
+        assert.equal(options.maxAttempts, 3);
+        assert.equal(options.staleLockMinutes, 30);
+        return 1;
+      },
+      listRecoverableWebhookIds: async (options) => {
+        assert.equal(options.limit, 25);
+        return recoverableIds;
+      },
+      claimWebhookProcessing: async (id, options) => {
+        claims.push({ id, options });
+        return {
+          id,
+          processing_status: 'processing',
+          locked_by: options.workerId,
+        };
+      },
+      processWebhookOrder: async (id, options) => {
+        processed.push({ id, options });
+        return {
+          duplicate: id === 202,
+          order: { id: id + 1000 },
+        };
+      },
+      markWebhookFailed: async (...args) => failed.push(args),
+      logInfo: async () => null,
+      logError: async () => null,
+    },
+  });
+
+  assert.deepEqual(webhookRecovery, {
+    candidates: 2,
+    recovered: 2,
+    duplicates: 1,
+    skipped: 0,
+    failed: 0,
+    exhausted: 1,
+  });
+  assert.equal(claims.length, 2);
+  assert.equal(processed.length, 2);
+  assert.equal(failed.length, 0);
+}
+
+{
+  let failureDispositionCount = 0;
+  const webhookRecovery = await recoverShopifyWebhooks({
+    config: {
+      WORKER_RECOVERY_BATCH_SIZE: 25,
+      SHOPIFY_WEBHOOK_MAX_ATTEMPTS: 3,
+      SHOPIFY_WEBHOOK_STALE_LOCK_MINUTES: 30,
+    },
+    runtime: {
+      webhookWorkerId: 'recovery-worker',
+      markExhaustedStaleWebhooksFailed: async () => 0,
+      listRecoverableWebhookIds: async () => [203],
+      claimWebhookProcessing: async () => ({
+        id: 203,
+        processing_status: 'processing',
+        locked_by: 'recovery-worker',
+      }),
+      processWebhookOrder: async () => {
+        throw new Error('simulated recovery failure');
+      },
+      markWebhookFailed: async () => {
+        failureDispositionCount += 1;
+      },
+      logInfo: async () => null,
+      logError: async () => null,
+    },
+  });
+  assert.equal(webhookRecovery.failed, 1);
+  assert.equal(failureDispositionCount, 1);
+}
+
 const workerSource = await fs.readFile(
   new URL('../src/worker.js', import.meta.url),
   'utf8'
@@ -275,5 +375,6 @@ assert.match(workerSource, /await runRecoveryCycle\('startup'\)/);
 assert.match(workerSource, /Date\.now\(\) >= nextRecoveryAt/);
 assert.match(workerSource, /if \(isStopping \|\| isRecoveryRunning\)/);
 assert.match(workerSource, /recovery\.pipeline_failed/);
+assert.match(workerSource, /result\.webhooks\.recovered/);
 
 console.log('pipeline recovery safety smoke ok');

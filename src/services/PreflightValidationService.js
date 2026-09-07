@@ -18,7 +18,90 @@ export const MANUAL_REVIEW_REASONS = Object.freeze({
     'invalid_configurator_payload_version',
   INVALID_CONFIGURATOR_OUTPUT_UNIT: 'invalid_configurator_output_unit',
   INVALID_WALLPAPER_QUANTITY: 'invalid_wallpaper_quantity',
+  MISSING_SHIPPING_ADDRESS: 'missing_shipping_address',
+  INVALID_SHIPPING_ADDRESS: 'invalid_shipping_address',
 });
+
+function normalizeAddressText(value) {
+  return String(value ?? '').trim();
+}
+
+export function validateShopifyShippingAddress(payload) {
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    Array.isArray(payload) ||
+    !Object.prototype.hasOwnProperty.call(payload, 'shipping_address') ||
+    payload.shipping_address === null ||
+    payload.shipping_address === undefined
+  ) {
+    return {
+      ok: false,
+      reason: MANUAL_REVIEW_REASONS.MISSING_SHIPPING_ADDRESS,
+      errors: ['shipping_address'],
+      normalized: null,
+    };
+  }
+
+  const address = payload.shipping_address;
+
+  if (typeof address !== 'object' || Array.isArray(address)) {
+    return {
+      ok: false,
+      reason: MANUAL_REVIEW_REASONS.INVALID_SHIPPING_ADDRESS,
+      errors: ['shipping_address'],
+      normalized: null,
+    };
+  }
+
+  const fullName = [address.first_name, address.last_name]
+    .map(normalizeAddressText)
+    .filter(Boolean)
+    .join(' ');
+  const company =
+    normalizeAddressText(address.company) ||
+    normalizeAddressText(address.name) ||
+    fullName;
+  const contactPerson =
+    normalizeAddressText(address.name) || fullName || company;
+  const normalized = {
+    company,
+    contactPerson,
+    street: [address.address1, address.address2]
+      .map(normalizeAddressText)
+      .filter(Boolean)
+      .join(', '),
+    postcode: normalizeAddressText(address.zip),
+    city: normalizeAddressText(address.city),
+    country: normalizeAddressText(address.country_code),
+    phone:
+      normalizeAddressText(address.phone) ||
+      normalizeAddressText(payload.phone) ||
+      normalizeAddressText(payload.customer?.phone) ||
+      '0000',
+  };
+  const requiredFields = {
+    company: normalized.company,
+    contact_person: normalized.contactPerson,
+    street: normalized.street,
+    postcode: normalized.postcode,
+    city: normalized.city,
+    country: normalized.country,
+  };
+  const errors = Object.entries(requiredFields)
+    .filter(([, value]) => !value)
+    .map(([field]) => field);
+
+  return {
+    ok: errors.length === 0,
+    reason:
+      errors.length === 0
+        ? null
+        : MANUAL_REVIEW_REASONS.INVALID_SHIPPING_ADDRESS,
+    errors,
+    normalized: errors.length === 0 ? normalized : null,
+  };
+}
 
 function findConfiguratorPayloadProperty(lineItem) {
   const properties = Array.isArray(lineItem?.properties)
@@ -267,4 +350,5 @@ export default {
   MANUAL_REVIEW_REASONS,
   isWallpaperSku,
   validateConfiguratorLineItem,
+  validateShopifyShippingAddress,
 };

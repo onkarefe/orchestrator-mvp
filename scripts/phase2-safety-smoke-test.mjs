@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import {
   MANUAL_REVIEW_REASONS,
   validateConfiguratorLineItem,
+  validateShopifyShippingAddress,
 } from '../src/services/PreflightValidationService.js';
+import {
+  getOrderPreflightDisposition,
+  getOrderSafetyManualReviewReasons,
+} from '../src/services/OrderService.js';
 import { REDACTED_VALUE, redact } from '../src/utils/redact.js';
 import { buildFactoryReference } from '../src/utils/factoryReference.js';
 
@@ -86,6 +91,68 @@ const testedSize = validateConfiguratorLineItem(
 );
 
 assert.equal(testedSize.ok, true);
+
+const validShipping = {
+  name: 'Production Customer',
+  address1: 'Factory Street 1',
+  zip: '12345',
+  city: 'Berlin',
+  country_code: 'DE',
+};
+assert.equal(
+  validateShopifyShippingAddress({
+    shipping_address: validShipping,
+  }).ok,
+  true
+);
+
+for (const fallbackOnlyPayload of [
+  { billing_address: validShipping },
+  { customer: { default_address: validShipping } },
+]) {
+  const validation = validateShopifyShippingAddress(fallbackOnlyPayload);
+  assert.equal(validation.ok, false);
+  assert.equal(
+    validation.reason,
+    MANUAL_REVIEW_REASONS.MISSING_SHIPPING_ADDRESS
+  );
+}
+
+const incompleteShipping = validateShopifyShippingAddress({
+  shipping_address: {
+    name: 'Production Customer',
+    address1: 'Factory Street 1',
+    city: 'Berlin',
+    country_code: 'DE',
+  },
+});
+assert.equal(incompleteShipping.ok, false);
+assert.equal(
+  incompleteShipping.reason,
+  MANUAL_REVIEW_REASONS.INVALID_SHIPPING_ADDRESS
+);
+assert.ok(incompleteShipping.errors.includes('postcode'));
+
+assert.deepEqual(
+  getOrderSafetyManualReviewReasons({
+    billing_address: validShipping,
+    line_items: [{ id: 10, sku: '20-140.1-3' }],
+  }),
+  [MANUAL_REVIEW_REASONS.MISSING_SHIPPING_ADDRESS]
+);
+assert.ok(
+  getOrderSafetyManualReviewReasons({
+    shipping_address: validShipping,
+    line_items: [{ id: 11, sku: '' }],
+  }).includes(MANUAL_REVIEW_REASONS.MISSING_SKU)
+);
+assert.equal(
+  getOrderPreflightDisposition({
+    pendingJobs: [{ id: 1 }],
+    manualReviewReasons: [MANUAL_REVIEW_REASONS.MISSING_SKU],
+  }).requiresManualReview,
+  true
+);
 
 const oversized = validateConfiguratorLineItem(
   {

@@ -40,6 +40,13 @@ const acceptedPaidOrderGate = evaluateFactoryDispatchGate({
     id: 1,
     shopify_order_id: '9001',
     raw_payload_json: {
+      shipping_address: {
+        name: 'Factory Customer',
+        address1: 'Street 1',
+        zip: '12345',
+        city: 'Berlin',
+        country_code: 'DE',
+      },
       line_items: [{ id: 101 }],
       cancelled_at: '2026-09-07T12:00:00Z',
       financial_status: 'refunded',

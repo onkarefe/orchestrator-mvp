@@ -1,13 +1,16 @@
+import os from 'node:os';
+
 import {
-  claimFailedWebhook,
+  claimWebhook,
   createWebhook,
   findWebhookByDeliveryId,
   findWebhookById,
   findOriginalWebhookByShopifyOrderId,
   listWebhooks,
-  updateWebhookDuplicate,
-  updateWebhookStatus,
+  updateClaimedWebhookDuplicate,
+  updateClaimedWebhookStatus,
 } from '../models/WebhookModel.js';
+import env from '../config/env.js';
 import { WEBHOOK_PROCESSING_STATUSES } from '../constants/statuses.js';
 import { logError, logInfo } from './LogService.js';
 import { createOrderAndJobsFromShopifyPayload } from './OrderService.js';
@@ -21,6 +24,10 @@ export async function recordWebhook(data) {
     status: data.status,
     processingStatus: data.processingStatus,
     hmacValid: data.hmacValid,
+    attemptCount: data.attemptCount,
+    maxAttempts: data.maxAttempts ?? env.SHOPIFY_WEBHOOK_MAX_ATTEMPTS,
+    lockedAt: data.lockedAt,
+    lockedBy: data.lockedBy,
     duplicateOfId: data.duplicateOfId,
     headersJson: data.headersJson,
     rawPayloadJson: data.rawPayloadJson,
@@ -45,22 +52,46 @@ export async function recordWebhook(data) {
   return webhook;
 }
 
-export async function markWebhookProcessed(id) {
-  return updateWebhookStatus(
-    id,
-    WEBHOOK_PROCESSING_STATUSES.PROCESSED,
-    null,
-    WEBHOOK_PROCESSING_STATUSES.PROCESSED
-  );
+export function getWebhookWorkerId(suffix = 'webhook') {
+  return `${os.hostname()}-${process.pid}-${suffix}`.slice(0, 191);
 }
 
-export async function markWebhookFailed(id, errorMessage) {
-  const webhook = await updateWebhookStatus(
-    id,
-    WEBHOOK_PROCESSING_STATUSES.FAILED,
+export async function claimWebhookProcessing(
+  id,
+  {
+    workerId = getWebhookWorkerId(),
+    maxAttempts = env.SHOPIFY_WEBHOOK_MAX_ATTEMPTS,
+    staleLockMinutes = env.SHOPIFY_WEBHOOK_STALE_LOCK_MINUTES,
+  } = {}
+) {
+  return claimWebhook(id, { workerId, maxAttempts, staleLockMinutes });
+}
+
+export async function markWebhookProcessed(id, { workerId } = {}) {
+  const result = await updateClaimedWebhookStatus(id, {
+    workerId,
+    status: WEBHOOK_PROCESSING_STATUSES.PROCESSED,
+    processingStatus: WEBHOOK_PROCESSING_STATUSES.PROCESSED,
+  });
+
+  if (!result.updated) {
+    throw new Error('webhook_processing_claim_lost');
+  }
+
+  return result.webhook;
+}
+
+export async function markWebhookFailed(
+  id,
+  errorMessage,
+  { workerId } = {}
+) {
+  const result = await updateClaimedWebhookStatus(id, {
+    workerId,
+    status: WEBHOOK_PROCESSING_STATUSES.FAILED,
+    processingStatus: WEBHOOK_PROCESSING_STATUSES.FAILED,
     errorMessage,
-    WEBHOOK_PROCESSING_STATUSES.FAILED
-  );
+  });
 
   await logError({
     scopeType: 'system',
@@ -69,29 +100,30 @@ export async function markWebhookFailed(id, errorMessage) {
     detailsJson: {
       webhookId: id,
       errorMessage,
+      claimUpdated: result.updated,
     },
   });
 
-  return webhook;
-}
-
-export async function claimFailedWebhookRetry(id) {
-  return claimFailedWebhook(id);
+  return result.webhook;
 }
 
 export async function markWebhookDuplicate(
   id,
   duplicateOfId = null,
-  errorMessage = 'Duplicate Shopify order webhook'
+  errorMessage = 'Duplicate Shopify order webhook',
+  { workerId } = {}
 ) {
-  const webhook = await updateWebhookDuplicate(id, {
-    status: WEBHOOK_PROCESSING_STATUSES.DUPLICATE,
-    // Keep the canonical delivery dedupe-eligible while retaining the
-    // user-facing duplicate outcome in status.
-    processingStatus: WEBHOOK_PROCESSING_STATUSES.PROCESSED,
+  const result = await updateClaimedWebhookDuplicate(id, {
+    workerId,
     duplicateOfId,
     errorMessage,
   });
+
+  if (!result.updated) {
+    throw new Error('webhook_processing_claim_lost');
+  }
+
+  const webhook = result.webhook;
 
   await logInfo({
     scopeType: 'system',
@@ -108,11 +140,21 @@ export async function markWebhookDuplicate(
   return webhook;
 }
 
-export async function processWebhookOrder(webhookId) {
+export async function processWebhookOrder(
+  webhookId,
+  { workerId = getWebhookWorkerId() } = {}
+) {
   const webhook = await findWebhookById(webhookId);
 
   if (!webhook) {
     throw new Error('Webhook not found');
+  }
+
+  if (
+    webhook.processing_status !== WEBHOOK_PROCESSING_STATUSES.PROCESSING ||
+    webhook.locked_by !== workerId
+  ) {
+    throw new Error('webhook_processing_claim_not_owned');
   }
 
   const orderResult = await createOrderAndJobsFromShopifyPayload(
@@ -126,7 +168,9 @@ export async function processWebhookOrder(webhookId) {
     );
     const duplicateWebhook = await markWebhookDuplicate(
       webhookId,
-      originalWebhook?.id ?? null
+      originalWebhook?.id ?? null,
+      'Duplicate Shopify order webhook',
+      { workerId }
     );
 
     return {
@@ -136,7 +180,9 @@ export async function processWebhookOrder(webhookId) {
     };
   }
 
-  const processedWebhook = await markWebhookProcessed(webhookId);
+  const processedWebhook = await markWebhookProcessed(webhookId, {
+    workerId,
+  });
 
   return {
     webhook: processedWebhook,
@@ -158,7 +204,8 @@ export function getWebhooks(filters) {
 
 export default {
   recordWebhook,
-  claimFailedWebhookRetry,
+  claimWebhookProcessing,
+  getWebhookWorkerId,
   markWebhookProcessed,
   markWebhookFailed,
   markWebhookDuplicate,

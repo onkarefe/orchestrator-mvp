@@ -101,6 +101,10 @@ CREATE TABLE IF NOT EXISTS webhooks (
   status VARCHAR(50) NOT NULL DEFAULT 'received',
   processing_status VARCHAR(50) NOT NULL DEFAULT 'pending',
   hmac_valid TINYINT(1) NULL,
+  attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
+  max_attempts INT UNSIGNED NOT NULL DEFAULT 3,
+  locked_at TIMESTAMP NULL DEFAULT NULL,
+  locked_by VARCHAR(191) NULL,
   dedupe_delivery_id VARCHAR(191) GENERATED ALWAYS AS (
     CASE
       WHEN delivery_id IS NOT NULL
@@ -124,6 +128,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
   KEY idx_webhooks_topic (topic),
   KEY idx_webhooks_status (status),
   KEY idx_webhooks_processing_status (processing_status),
+  KEY idx_webhooks_processing_lock (processing_status, locked_at),
   KEY idx_webhooks_shopify_order_id (shopify_order_id),
   KEY idx_webhooks_delivery_id (delivery_id),
   UNIQUE KEY uq_webhooks_provider_dedupe_delivery (provider, dedupe_delivery_id),

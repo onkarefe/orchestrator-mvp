@@ -1,4 +1,5 @@
 import { buildOrderFactoryIdentity } from './factoryFileNames.js';
+import { validateShopifyShippingAddress } from '../services/PreflightValidationService.js';
 
 export function xmlEscape(value) {
   if (value === null || value === undefined) {
@@ -54,72 +55,14 @@ function getShippingFrom() {
   };
 }
 
-function isAddress(value) {
-  return Boolean(
-    value &&
-      typeof value === 'object' &&
-      !Array.isArray(value) &&
-      Object.values(value).some((field) => normalizeText(field))
-  );
-}
-
-function getShippingAddress(rawPayload) {
-  return [
-    rawPayload?.shipping_address,
-    rawPayload?.billing_address,
-    rawPayload?.customer?.default_address,
-  ].find(isAddress) ?? {};
-}
-
-function getAddressFullName(address) {
-  return [address?.first_name, address?.last_name]
-    .map(normalizeText)
-    .filter(Boolean)
-    .join(' ');
-}
-
 function getShippingTo(rawPayload) {
-  const address = getShippingAddress(rawPayload);
-  const fullName = getAddressFullName(address);
-  const company =
-    normalizeText(address.company) || normalizeText(address.name) || fullName;
-  const contactPerson =
-    normalizeText(address.name) || fullName || company;
-  const shippingTo = {
-    company,
-    contactPerson,
-    street: [address.address1, address.address2]
-      .map(normalizeText)
-      .filter(Boolean)
-      .join(', '),
-    postcode: normalizeText(address.zip),
-    city: normalizeText(address.city),
-    country: normalizeText(address.country_code),
-    phone:
-      normalizeText(address.phone) ||
-      normalizeText(rawPayload?.phone) ||
-      normalizeText(rawPayload?.customer?.phone) ||
-      '0000',
-  };
-  const requiredFields = {
-    company: shippingTo.company,
-    contact_person: shippingTo.contactPerson,
-    street: shippingTo.street,
-    postcode: shippingTo.postcode,
-    city: shippingTo.city,
-    country: shippingTo.country,
-  };
-  const missingFields = Object.entries(requiredFields)
-    .filter(([, value]) => !value)
-    .map(([field]) => field);
+  const validation = validateShopifyShippingAddress(rawPayload);
 
-  if (missingFields.length > 0) {
-    throw new Error(
-      `Required NEXO shipping_to fields are missing: ${missingFields.join(', ')}`
-    );
+  if (!validation.ok) {
+    throw new Error(validation.reason);
   }
 
-  return shippingTo;
+  return validation.normalized;
 }
 
 function getGeneratedPanels(panelFiles) {
@@ -177,17 +120,10 @@ function getGeneratedPanels(panelFiles) {
 
 function buildPositionXml(position, index) {
   const sku = normalizeText(position?.sku);
-  const copiesPerVariant = Number(position?.quantity);
   const panels = getGeneratedPanels(position?.panelFiles);
 
   if (!sku) {
     throw new Error(`Wallpaper position ${index + 1} requires a non-empty SKU`);
-  }
-
-  if (!Number.isSafeInteger(copiesPerVariant) || copiesPerVariant <= 0) {
-    throw new Error(
-      `Wallpaper position ${index + 1} quantity must be a positive integer`
-    );
   }
 
   const firstPanel = panels[0];
@@ -203,7 +139,7 @@ function buildPositionXml(position, index) {
       <width unit="mm">${xmlEscape(formatMm(firstPanel.widthMm))}</width>
       <height unit="mm">${xmlEscape(formatMm(firstPanel.heightMm))}</height>
       <variants>${xmlEscape(panels.length)}</variants>
-      <copies_per_variant>${xmlEscape(copiesPerVariant)}</copies_per_variant>
+      <copies_per_variant>1</copies_per_variant>
       <files>
 ${fileItems}
       </files>

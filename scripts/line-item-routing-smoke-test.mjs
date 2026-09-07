@@ -13,6 +13,7 @@ import { ensureOrderFactoryUploadTask } from '../src/services/FactoryUploadTaskS
 import { createConfiguratorJobFromLineItem } from '../src/services/JobService.js';
 import { classifyShopifyLineItem } from '../src/services/LineItemRoutingService.js';
 import { MANUAL_REVIEW_REASONS } from '../src/services/PreflightValidationService.js';
+import { inspectOrderFactoryReadiness } from '../src/processing/OrderFactoryPackageAssembler.js';
 
 const validPayload = {
   version: 1,
@@ -111,6 +112,17 @@ assert.equal(
   unknownRouting.routingState,
   LINE_ITEM_ROUTING_STATES.FACTORY_BLOCKED
 );
+
+const missingSkuItem = item(110, '');
+const missingSkuRouting = classifyShopifyLineItem(
+  missingSkuItem,
+  routingOptions
+);
+assert.equal(
+  missingSkuRouting.classification,
+  LINE_ITEM_CLASSIFICATIONS.UNKNOWN
+);
+assert.equal(missingSkuRouting.routingReason, 'unknown_sku');
 
 const prefixLikeRouting = classifyShopifyLineItem(
   configurableItem(105, '20-140.1-3-extra'),
@@ -328,7 +340,17 @@ function orderFor(...lineItems) {
   return {
     id: 1,
     shopify_order_id: '9001',
-    raw_payload_json: { id: 9001, line_items: lineItems },
+    raw_payload_json: {
+      id: 9001,
+      shipping_address: {
+        name: 'Factory Customer',
+        address1: 'Street 1',
+        zip: '12345',
+        city: 'Berlin',
+        country_code: 'DE',
+      },
+      line_items: lineItems,
+    },
   };
 }
 
@@ -456,6 +478,98 @@ assert.equal(incomplete.allowed, false);
 assert.equal(
   incomplete.reason,
   FACTORY_DISPATCH_BLOCK_REASONS.CLASSIFICATION_INCOMPLETE
+);
+
+for (const rawPayload of [
+  {
+    id: 9001,
+    billing_address:
+      wallpaperOnlyOrder.raw_payload_json.shipping_address,
+    line_items: [validWallpaper],
+  },
+  {
+    id: 9001,
+    customer: {
+      default_address:
+        wallpaperOnlyOrder.raw_payload_json.shipping_address,
+    },
+    line_items: [validWallpaper],
+  },
+]) {
+  const gate = evaluateFactoryDispatchGate({
+    order: {
+      ...wallpaperOnlyOrder,
+      raw_payload_json: rawPayload,
+    },
+    lineItems: wallpaperOnlyLines,
+  });
+  assert.equal(gate.allowed, false);
+  assert.equal(
+    gate.reason,
+    FACTORY_DISPATCH_BLOCK_REASONS.MISSING_SHIPPING_ADDRESS
+  );
+  const result = await ensureOrderFactoryUploadTask({
+    order: {
+      ...wallpaperOnlyOrder,
+      raw_payload_json: rawPayload,
+    },
+    orderPackage,
+    artifact,
+    config: factoryConfig,
+    orderLineItems: wallpaperOnlyLines,
+    runtime: factoryRuntime,
+  });
+  assert.equal(result.task, null);
+  assert.equal(result.blocked, true);
+  const packageReadiness = await inspectOrderFactoryReadiness({
+    order: {
+      ...wallpaperOnlyOrder,
+      raw_payload_json: rawPayload,
+    },
+    lineItems: wallpaperOnlyLines,
+    jobs: [],
+    artifacts: [],
+  });
+  assert.equal(packageReadiness.ready, false);
+  assert.equal(
+    packageReadiness.reason,
+    FACTORY_DISPATCH_BLOCK_REASONS.MISSING_SHIPPING_ADDRESS
+  );
+}
+
+const invalidShippingGate = evaluateFactoryDispatchGate({
+  order: {
+    ...wallpaperOnlyOrder,
+    raw_payload_json: {
+      ...wallpaperOnlyOrder.raw_payload_json,
+      shipping_address: {
+        name: 'Factory Customer',
+        address1: 'Street 1',
+        city: 'Berlin',
+        country_code: 'DE',
+      },
+    },
+  },
+  lineItems: wallpaperOnlyLines,
+});
+assert.equal(invalidShippingGate.allowed, false);
+assert.equal(
+  invalidShippingGate.reason,
+  FACTORY_DISPATCH_BLOCK_REASONS.INVALID_SHIPPING_ADDRESS
+);
+assert.equal(createdTaskCount, 1);
+
+const manualReviewGate = evaluateFactoryDispatchGate({
+  order: {
+    ...wallpaperOnlyOrder,
+    status: 'manual_review',
+  },
+  lineItems: wallpaperOnlyLines,
+});
+assert.equal(manualReviewGate.allowed, false);
+assert.equal(
+  manualReviewGate.reason,
+  FACTORY_DISPATCH_BLOCK_REASONS.ORDER_MANUAL_REVIEW
 );
 
 console.log('line-item routing safety smoke ok');

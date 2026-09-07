@@ -66,7 +66,7 @@ function assertPanelCase({
     positions: [
       {
         sku: 'wandini-prod1-b',
-        quantity: 1,
+        quantity: 27,
         panelFiles,
       },
     ],
@@ -89,6 +89,11 @@ function assertPanelCase({
   assert.match(xml, new RegExp(`<width unit="mm">${expectedPanelWidthMm}</width>`));
   assert.match(xml, new RegExp(`<height unit="mm">${heightMm}</height>`));
   assert.match(xml, new RegExp(`<variants>${expectedPanelCount}</variants>`));
+  assert.equal(
+    (xml.match(/<copies_per_variant>1<\/copies_per_variant>/g) ?? []).length,
+    1
+  );
+  assert.ok(!xml.includes('<copies_per_variant>27</copies_per_variant>'));
 
   return { widthMm, panelCount: panelInfo.panelCount, panelWidthMm };
 }
@@ -105,5 +110,71 @@ const cases = [
     expectedPanelWidthMm: 675,
   }),
 ];
+
+const fallbackOnlyOrder = {
+  raw_payload_json: {
+    id: 7217548394776,
+    billing_address:
+      JSON.parse(order.raw_payload_json).shipping_address,
+  },
+};
+assert.throws(
+  () =>
+    buildOrderXml({
+      order: fallbackOnlyOrder,
+      shopifyOrderId: '7217548394776',
+      positions: [
+        {
+          sku: 'wandini-prod1-b',
+          quantity: 1,
+          panelFiles: buildPanelFiles({
+            shopifyOrderId: '7217548394776',
+            panelCount: 1,
+            panelWidthMm: 500,
+            heightMm: 2000,
+          }),
+        },
+      ],
+    }),
+  /missing_shipping_address/
+);
+
+const quantityOneXml = buildOrderXml({
+  order,
+  shopifyOrderId: '7217548394776',
+  positions: [
+    {
+      sku: 'wandini-prod1-b',
+      quantity: 1,
+      panelFiles: buildPanelFiles({
+        shopifyOrderId: '7217548394776',
+        panelCount: 1,
+        panelWidthMm: 500,
+        heightMm: 2000,
+      }),
+    },
+  ],
+});
+const quantityChangedXml = buildOrderXml({
+  order,
+  shopifyOrderId: '7217548394776',
+  positions: [
+    {
+      sku: 'wandini-prod1-b',
+      quantity: 99,
+      panelFiles: buildPanelFiles({
+        shopifyOrderId: '7217548394776',
+        panelCount: 1,
+        panelWidthMm: 500,
+        heightMm: 2000,
+      }),
+    },
+  ],
+});
+assert.match(
+  quantityChangedXml,
+  /<order_number>WANDINI-S7217548394776<\/order_number>/
+);
+assert.equal(quantityChangedXml, quantityOneXml);
 
 console.log('xml smoke ok:', cases);
