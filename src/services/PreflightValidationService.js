@@ -1,6 +1,7 @@
 import { resolveMasterPath } from '../processing/masterResolver.js';
 import { isValidCropRatio } from '../processing/validation.js';
 import env from '../config/env.js';
+import { resolveConfiguratorProperties } from './ConfiguratorPropertyResolver.js';
 
 export const MANUAL_REVIEW_REASONS = Object.freeze({
   INVALID_CONFIGURATOR_PAYLOAD: 'invalid_configurator_payload',
@@ -103,19 +104,7 @@ export function validateShopifyShippingAddress(payload) {
   };
 }
 
-function findConfiguratorPayloadProperty(lineItem) {
-  const properties = Array.isArray(lineItem?.properties)
-    ? lineItem.properties
-    : [];
-
-  return properties.find(
-    (property) => property?.name === 'configurator_payload'
-  );
-}
-
-function hasConfiguratorPayloadValue(payloadProperty) {
-  const value = payloadProperty?.value;
-
+function hasConfiguratorPayloadValue(value) {
   return Boolean(
     (typeof value === 'string' && value.trim()) ||
       (value && typeof value === 'object' && !Array.isArray(value))
@@ -249,7 +238,8 @@ export function validateConfiguratorLineItem(
     wallpaperSkus = env.WALLPAPER_SKUS,
   } = {}
 ) {
-  const payloadProperty = findConfiguratorPayloadProperty(lineItem);
+  const { payload: configuratorPayloadValue } =
+    resolveConfiguratorProperties(lineItem?.properties);
   const configuratorSkuRequired = isWallpaperSku(
     lineItem?.sku,
     wallpaperSkus
@@ -266,7 +256,7 @@ export function validateConfiguratorLineItem(
     };
   }
 
-  if (!payloadProperty || !hasConfiguratorPayloadValue(payloadProperty)) {
+  if (!hasConfiguratorPayloadValue(configuratorPayloadValue)) {
     return {
       isConfigurable: true,
       ok: false,
@@ -278,7 +268,7 @@ export function validateConfiguratorLineItem(
   }
 
   const errors = [];
-  const parsedPayload = parseConfiguratorPayload(payloadProperty.value);
+  const parsedPayload = parseConfiguratorPayload(configuratorPayloadValue);
   const configuratorPayload = parsedPayload.value;
   let masterPath = null;
 

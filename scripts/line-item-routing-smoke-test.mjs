@@ -13,6 +13,13 @@ import { ensureOrderFactoryUploadTask } from '../src/services/FactoryUploadTaskS
 import { createConfiguratorJobFromLineItem } from '../src/services/JobService.js';
 import { classifyShopifyLineItem } from '../src/services/LineItemRoutingService.js';
 import { MANUAL_REVIEW_REASONS } from '../src/services/PreflightValidationService.js';
+import {
+  LEGACY_CONFIGURATOR_INSTANCE_PROPERTY,
+  LEGACY_CONFIGURATOR_PAYLOAD_PROPERTY,
+  PRIVATE_CONFIGURATOR_INSTANCE_PROPERTY,
+  PRIVATE_CONFIGURATOR_PAYLOAD_PROPERTY,
+  resolveConfiguratorProperties,
+} from '../src/services/ConfiguratorPropertyResolver.js';
 import { inspectOrderFactoryReadiness } from '../src/processing/OrderFactoryPackageAssembler.js';
 
 const validPayload = {
@@ -64,6 +71,178 @@ assert.equal(
     wallpaperSkus: [],
   }).classification,
   LINE_ITEM_CLASSIFICATIONS.UNKNOWN
+);
+
+const privatePayloadValue = JSON.stringify({
+  ...validPayload,
+  master_asset_id: 'private-master',
+});
+const privateWallpaper = item(111, '20-140.1-3', [
+  {
+    name: PRIVATE_CONFIGURATOR_PAYLOAD_PROPERTY,
+    value: privatePayloadValue,
+  },
+]);
+const privateWallpaperRouting = classifyShopifyLineItem(
+  privateWallpaper,
+  routingOptions
+);
+assert.equal(
+  resolveConfiguratorProperties(privateWallpaper.properties).payload,
+  privatePayloadValue
+);
+assert.equal(
+  privateWallpaperRouting.classification,
+  LINE_ITEM_CLASSIFICATIONS.WALLPAPER
+);
+assert.equal(
+  privateWallpaperRouting.routingState,
+  LINE_ITEM_ROUTING_STATES.PRODUCTION_READY
+);
+assert.equal(
+  privateWallpaperRouting.validation.configuratorPayload.master_asset_id,
+  'private-master'
+);
+
+const legacyPayloadValue = JSON.stringify({
+  ...validPayload,
+  master_asset_id: 'legacy-master',
+});
+const bothPayloadNames = item(112, '20-140.1-3', [
+  {
+    name: LEGACY_CONFIGURATOR_PAYLOAD_PROPERTY,
+    value: legacyPayloadValue,
+  },
+  {
+    name: PRIVATE_CONFIGURATOR_PAYLOAD_PROPERTY,
+    value: privatePayloadValue,
+  },
+]);
+const bothPayloadNamesRouting = classifyShopifyLineItem(
+  bothPayloadNames,
+  routingOptions
+);
+assert.equal(bothPayloadNamesRouting.validation.ok, true);
+assert.equal(
+  bothPayloadNamesRouting.validation.configuratorPayload.master_asset_id,
+  'private-master'
+);
+
+const malformedPrivatePayload = item(113, '20-140.1-3', [
+  {
+    name: LEGACY_CONFIGURATOR_PAYLOAD_PROPERTY,
+    value: legacyPayloadValue,
+  },
+  {
+    name: PRIVATE_CONFIGURATOR_PAYLOAD_PROPERTY,
+    value: '{malformed',
+  },
+]);
+const malformedPrivateRouting = classifyShopifyLineItem(
+  malformedPrivatePayload,
+  routingOptions
+);
+assert.equal(
+  malformedPrivateRouting.routingState,
+  LINE_ITEM_ROUTING_STATES.FACTORY_BLOCKED
+);
+assert.ok(
+  malformedPrivateRouting.validation.errors.includes(
+    MANUAL_REVIEW_REASONS.INVALID_CONFIGURATOR_PAYLOAD
+  )
+);
+assert.equal(malformedPrivateRouting.validation.configuratorPayload, null);
+
+assert.equal(
+  resolveConfiguratorProperties([
+    {
+      name: PRIVATE_CONFIGURATOR_INSTANCE_PROPERTY,
+      value: 'new-instance',
+    },
+  ]).instanceId,
+  'new-instance'
+);
+assert.equal(
+  resolveConfiguratorProperties([
+    {
+      name: LEGACY_CONFIGURATOR_INSTANCE_PROPERTY,
+      value: 'legacy-instance',
+    },
+  ]).instanceId,
+  'legacy-instance'
+);
+assert.equal(
+  resolveConfiguratorProperties([
+    {
+      name: LEGACY_CONFIGURATOR_INSTANCE_PROPERTY,
+      value: 'legacy-instance',
+    },
+    {
+      name: PRIVATE_CONFIGURATOR_INSTANCE_PROPERTY,
+      value: 'new-instance',
+    },
+  ]).instanceId,
+  'new-instance'
+);
+assert.deepEqual(resolveConfiguratorProperties([]), {
+  payload: null,
+  instanceId: null,
+});
+
+const invalidPrivateValidation = classifyShopifyLineItem(
+  item(114, '20-140.1-3', [
+    {
+      name: PRIVATE_CONFIGURATOR_PAYLOAD_PROPERTY,
+      value: JSON.stringify({
+        version: 2,
+        output: { width: 0, height: 2400, unit: 'cm' },
+        crop_ratio: { x: -1, y: 0, w: 2, h: 1 },
+      }),
+    },
+  ]),
+  routingOptions
+);
+for (const expectedError of [
+  MANUAL_REVIEW_REASONS.INVALID_CONFIGURATOR_PAYLOAD_VERSION,
+  MANUAL_REVIEW_REASONS.INVALID_CONFIGURATOR_OUTPUT_UNIT,
+  MANUAL_REVIEW_REASONS.MISSING_MASTER_ASSET_ID,
+  MANUAL_REVIEW_REASONS.INVALID_OUTPUT_DIMENSIONS,
+  MANUAL_REVIEW_REASONS.INVALID_CROP_RATIO,
+]) {
+  assert.ok(invalidPrivateValidation.validation.errors.includes(expectedError));
+}
+
+const missingPrivateMasterFile = classifyShopifyLineItem(
+  item(115, '20-140.1-3', [
+    {
+      name: PRIVATE_CONFIGURATOR_PAYLOAD_PROPERTY,
+      value: privatePayloadValue,
+    },
+  ]),
+  {
+    ...routingOptions,
+    validationOptions: {
+      checkMasterFileExists: true,
+      resolveMasterPathFn: () => {
+        throw new Error('missing test master');
+      },
+    },
+  }
+);
+assert.ok(
+  missingPrivateMasterFile.validation.errors.includes(
+    MANUAL_REVIEW_REASONS.MISSING_MASTER_FILE
+  )
+);
+
+const invalidPrivateQuantity = classifyShopifyLineItem(
+  { ...privateWallpaper, id: 116, quantity: 2 },
+  routingOptions
+);
+assert.ok(
+  invalidPrivateQuantity.validation.errors.includes(
+    MANUAL_REVIEW_REASONS.INVALID_WALLPAPER_QUANTITY
+  )
 );
 
 const missingConfiguratorWallpaper = item(102, '20-140.1-4');
@@ -192,11 +371,13 @@ assert.equal(
 );
 
 let createdJobCount = 0;
+let createdJobData = null;
 const jobRuntime = {
-  validateConfiguratorLineItem: () => validWallpaperRouting.validation,
+  validateConfiguratorLineItem: () => privateWallpaperRouting.validation,
   findJobByShopifyOrderAndLineItem: async () => null,
   createJob: async (data) => {
     createdJobCount += 1;
+    createdJobData = data;
     return {
       id: createdJobCount,
       order_id: data.orderId,
@@ -206,12 +387,17 @@ const jobRuntime = {
     };
   },
 };
-const validJob = await createConfiguratorJobFromLineItem(1, validWallpaper, {
+const validJob = await createConfiguratorJobFromLineItem(1, privateWallpaper, {
   shopifyOrderId: 9001,
   runtime: jobRuntime,
 });
 assert.equal(validJob.created, true);
 assert.equal(createdJobCount, 1);
+assert.equal(createdJobData.masterAssetId, 'private-master');
+assert.equal(
+  createdJobData.rawPayloadJson.configuratorPayload.master_asset_id,
+  'private-master'
+);
 
 for (const nonWallpaper of [accessory, untrustedPayloadItem]) {
   const result = await createConfiguratorJobFromLineItem(1, nonWallpaper, {
