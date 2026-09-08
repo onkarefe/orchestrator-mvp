@@ -40,7 +40,7 @@ function configurableItem(id, sku = '20-140.1-3', payload = validPayload) {
 }
 
 const routingOptions = {
-  wallpaperSkus: ['20-140.1-3', '20-140.1-4'],
+  wallpaperSkus: ['20-140.1-3', '20-140.1-4', '20-331.1-3'],
   accessorySkus: ['ACCESSORY-EXPLICIT'],
   validationOptions: { checkMasterFileExists: false },
 };
@@ -77,7 +77,7 @@ const privatePayloadValue = JSON.stringify({
   ...validPayload,
   master_asset_id: 'private-master',
 });
-const privateWallpaper = item(111, '20-140.1-3', [
+const privateWallpaper = item(111, '20-331.1-3', [
   {
     name: PRIVATE_CONFIGURATOR_PAYLOAD_PROPERTY,
     value: privatePayloadValue,
@@ -190,7 +190,7 @@ assert.deepEqual(resolveConfiguratorProperties([]), {
 });
 
 const invalidPrivateValidation = classifyShopifyLineItem(
-  item(114, '20-140.1-3', [
+  item(114, '20-331.1-3', [
     {
       name: PRIVATE_CONFIGURATOR_PAYLOAD_PROPERTY,
       value: JSON.stringify({
@@ -213,7 +213,7 @@ for (const expectedError of [
 }
 
 const missingPrivateMasterFile = classifyShopifyLineItem(
-  item(115, '20-140.1-3', [
+  item(115, '20-331.1-3', [
     {
       name: PRIVATE_CONFIGURATOR_PAYLOAD_PROPERTY,
       value: privatePayloadValue,

@@ -14,7 +14,7 @@ import {
 } from './jobWorkspace.js';
 import { buildWallpaperPanelFileName } from './factoryFileNames.js';
 import { resolveMasterPath } from './masterResolver.js';
-import { buildPanelPixelWidths, computePanelsFromOutputMm } from './panels.js';
+import { buildWallpaperRenderPlan } from './panels.js';
 import { createPanelPdfFile } from './pdf.js';
 import { isValidCropRatio } from './validation.js';
 import { createZipFromFileEntries } from './zip.js';
@@ -167,55 +167,51 @@ export async function processJobToZip({ order, job, lineItem }) {
   const sourcePosition = validateOrderLineItem(order, job, lineItem);
   const shopifyOrderId = getShopifyOrderId(order);
   const masterPath = resolveMasterPath(job.master_asset_id);
-  const panelInfo = computePanelsFromOutputMm(widthMm);
   const metadata = await getImageMetadata(masterPath);
   const safeCrop = calculateSafeCrop(metadata, cropRatio);
-  const panelPixelWidths = buildPanelPixelWidths(safeCrop.width, panelInfo.panelCount);
+  const renderPlan = buildWallpaperRenderPlan({
+    sku: lineItem.sku,
+    outputWidthMm: widthMm,
+    outputHeightMm: heightMm,
+    crop: safeCrop,
+  });
+  const { panelInfo } = renderPlan;
   const panelFiles = [];
   const fileEntries = [];
-  const pageWidthMm = panelInfo.panelWidthCm * 10;
+  const { pageWidthMm } = renderPlan;
   const workspace = await createJobWorkspace({
     orderId: order.id,
     jobId: job.id,
     shopifyOrderId,
     attemptCount: job.attempt_count,
   });
-  let panelLeft = safeCrop.left;
-
-  for (let index = 0; index < panelPixelWidths.length; index += 1) {
+  for (let index = 0; index < renderPlan.segments.length; index += 1) {
+    const segment = renderPlan.segments[index];
     const panelFileName = buildWallpaperPanelFileName({
       shopifyOrderId,
       sourcePosition,
       panelNumber: index + 1,
     });
     const tempPanelPath = path.join(workspace.panelsDir, panelFileName);
-    const panelCrop = {
-      left: panelLeft,
-      top: safeCrop.top,
-      width: panelPixelWidths[index],
-      height: safeCrop.height,
-    };
 
     await createPanelPdfFile({
       masterPath,
-      crop: panelCrop,
-      pageWidthMm,
-      pageHeightMm: heightMm,
+      crop: segment.crop,
+      pageWidthMm: segment.pageWidthMm,
+      pageHeightMm: segment.pageHeightMm,
       outputPath: tempPanelPath,
     });
 
     panelFiles.push({
       fileName: panelFileName,
-      widthMm: pageWidthMm,
-      heightMm,
+      widthMm: segment.pageWidthMm,
+      heightMm: segment.pageHeightMm,
     });
 
     fileEntries.push({
       name: panelFileName,
       filePath: tempPanelPath,
     });
-
-    panelLeft += panelPixelWidths[index];
   }
 
   const validationResult = await validateArtifactConsistency({

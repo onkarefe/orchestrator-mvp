@@ -1,4 +1,5 @@
 export const MAX_PANEL_CM = 70;
+export const NATHLOS_SINGLE_PIECE_SKU = '20-331.1-3';
 
 export function computePanelsFromOutputMm(outputWidthMm) {
   if (typeof outputWidthMm !== 'number' || !Number.isFinite(outputWidthMm) || outputWidthMm <= 0) {
@@ -37,8 +38,70 @@ export function buildPanelPixelWidths(totalWidthPx, panelCount) {
   );
 }
 
+export function buildWallpaperRenderPlan({
+  sku,
+  outputWidthMm,
+  outputHeightMm,
+  crop,
+}) {
+  let panelInfo;
+  let pageWidthMm;
+
+  if (sku === NATHLOS_SINGLE_PIECE_SKU) {
+    if (
+      typeof outputWidthMm !== 'number' ||
+      !Number.isFinite(outputWidthMm) ||
+      outputWidthMm <= 0
+    ) {
+      throw new Error('outputWidthMm must be a positive finite number');
+    }
+
+    const widthCm = outputWidthMm / 10;
+    panelInfo = {
+      widthCm,
+      panelCount: 1,
+      panelWidthCm: widthCm,
+    };
+    pageWidthMm = outputWidthMm;
+  } else {
+    panelInfo = computePanelsFromOutputMm(outputWidthMm);
+    pageWidthMm = panelInfo.panelWidthCm * 10;
+  }
+
+  const panelPixelWidths = buildPanelPixelWidths(
+    crop.width,
+    panelInfo.panelCount
+  );
+  let panelLeft = crop.left;
+  const segments = panelPixelWidths.map((panelWidthPx) => {
+    const segment = {
+      crop: {
+        left: panelLeft,
+        top: crop.top,
+        width: panelWidthPx,
+        height: crop.height,
+      },
+      pageWidthMm,
+      pageHeightMm: outputHeightMm,
+    };
+
+    panelLeft += panelWidthPx;
+
+    return segment;
+  });
+
+  return {
+    panelInfo,
+    pageWidthMm,
+    pageHeightMm: outputHeightMm,
+    segments,
+  };
+}
+
 export default {
   MAX_PANEL_CM,
+  NATHLOS_SINGLE_PIECE_SKU,
   computePanelsFromOutputMm,
   buildPanelPixelWidths,
+  buildWallpaperRenderPlan,
 };
