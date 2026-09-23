@@ -381,7 +381,8 @@ try {
         async rollback() {},
         release() {},
       }),
-      findOrderByIdForUpdate: async () => twoOrder,
+      findOrderByIdForUpdate: async () => ({ ...twoOrder, status: 'processing' }),
+      updateOrderStatus: async () => assert.fail('Not-ready orders must not change status'),
       listOrderLineItemsByOrderId: async () => twoLines,
       findOrderFactoryPackageByOrderId: async () => null,
       listJobsByOrderId: async () => pendingRenders.map((item) => item.job),
@@ -399,6 +400,7 @@ try {
     },
   });
   assert.equal(notReadyResult.disposition, 'not_ready');
+  assert.equal(notReadyResult.order.status, 'processing');
   assert.equal(notReadyResult.task, null);
   assert.equal(prematureAssemblyCount, 0);
   assert.equal(prematureTaskCount, 0);
@@ -444,7 +446,7 @@ try {
   ];
   for (const fixture of addonCases) {
     const order = orderFixture(fixture.id, fixture.sources);
-    order.status = 'received';
+    order.status = fixture.wallpaper.length ? 'processing' : 'received';
     const lines = fixture.sources.map((source, index) => persistedLine(
       order, source, index, fixture.wallpaper.includes(index) ? 'WALLPAPER' : 'ACCESSORY'
     ));
@@ -527,35 +529,84 @@ try {
     // Exercise actual readiness, assembly, and task creation through recovery.
     // Persistence is stubbed; no DB or FTP connection is made.
     const state = { artifact: null, package: null, task: null };
+    let pending;
+    let activeConnection;
+    let failurePoint;
+    let statusWrites = 0;
+    let rollbacks = 0;
+    function assertTransaction(db) {
+      assert.equal(db, activeConnection);
+      assert.ok(pending, 'Writes must run before commit');
+    }
     const runtime = {
-      getConnection: async () => ({
-        async beginTransaction() {}, async commit() {}, async rollback() {}, release() {},
-      }),
-      findOrderByIdForUpdate: async () => order,
+      getConnection: async () => {
+        activeConnection = {
+          async beginTransaction() {
+            pending = structuredClone({ ...state, order });
+          },
+          async commit() {
+            if (failurePoint === 'commit') throw new Error('injected_commit_failure');
+            Object.assign(state, {
+              artifact: pending.artifact, package: pending.package, task: pending.task,
+            });
+            Object.assign(order, pending.order);
+            pending = null;
+          },
+          async rollback() { rollbacks += 1; pending = null; },
+          release() {},
+        };
+        return activeConnection;
+      },
+      findOrderByIdForUpdate: async (id, db) => {
+        assertTransaction(db);
+        assert.equal(id, order.id);
+        return { ...pending.order };
+      },
+      updateOrderStatus: async (id, status, db) => {
+        assertTransaction(db);
+        assert.equal(id, order.id);
+        assert.equal(status, 'completed');
+        assert.ok(pending.package && pending.artifact && pending.task);
+        assert.notEqual(order.status, 'completed', 'No status repair is visible before commit');
+        pending.order.status = status;
+        statusWrites += 1;
+        if (failurePoint === 'status') throw new Error('injected_status_failure');
+        return { ...pending.order };
+      },
       listOrderLineItemsByOrderId: async () => lines,
       listJobsByOrderId: async () => input.jobs,
       listArtifactsByOrderId: async () => input.artifacts,
-      findOrderFactoryPackageByOrderId: async () => state.package,
-      findArtifactById: async () => state.artifact,
+      findOrderFactoryPackageByOrderId: async () => pending.package,
+      findArtifactById: async () => pending.artifact,
       inspectOrderFactoryReadiness: (data) => inspectOrderFactoryReadiness({ ...data, artifactsRoot }),
       assembleOrderFactoryPackage: (data) => assembleOrderFactoryPackage({ ...data, artifactsRoot }),
-      createArtifact: async (data) => (state.artifact = {
-        id: 5000 + fixture.id, order_id: data.orderId, job_id: data.jobId,
-        type: data.type, status: data.status, validation_status: data.validationStatus,
-        manifest_path: data.manifestPath, file_name: data.fileName,
-      }),
-      createOrderFactoryPackage: async (data) => (state.package = {
-        id: 6000 + fixture.id, order_id: data.orderId, artifact_id: data.artifactId,
-        order_number: data.orderNumber, status: data.status,
-        manifest_path: data.manifestPath, xml_file_name: data.xmlFileName,
-      }),
-      findFactoryUploadTaskByOrderPackageId: async () => state.task,
-      createFactoryUploadTask: async (data) => (state.task = {
-        id: 7000 + fixture.id, order_id: data.orderId, job_id: data.jobId,
-        artifact_id: data.artifactId, order_factory_package_id: data.orderFactoryPackageId,
-        shopify_order_id: data.shopifyOrderId, factory_reference: data.factoryReference,
-        upload_mode: data.uploadMode, status: data.status,
-      }),
+      createArtifact: async (data, db) => {
+        assertTransaction(db);
+        return (pending.artifact = {
+          id: 5000 + fixture.id, order_id: data.orderId, job_id: data.jobId,
+          type: data.type, status: data.status, validation_status: data.validationStatus,
+          manifest_path: data.manifestPath, file_name: data.fileName,
+        });
+      },
+      createOrderFactoryPackage: async (data, db) => {
+        assertTransaction(db);
+        return (pending.package = {
+          id: 6000 + fixture.id, order_id: data.orderId, artifact_id: data.artifactId,
+          order_number: data.orderNumber, status: data.status,
+          manifest_path: data.manifestPath, xml_file_name: data.xmlFileName,
+        });
+      },
+      findFactoryUploadTaskByOrderPackageId: async () => pending.task,
+      createFactoryUploadTask: async (data, db) => {
+        assertTransaction(db);
+        if (failurePoint === 'task') throw new Error('injected_task_failure');
+        return (pending.task = {
+          id: 7000 + fixture.id, order_id: data.orderId, job_id: data.jobId,
+          artifact_id: data.artifactId, order_factory_package_id: data.orderFactoryPackageId,
+          shopify_order_id: data.shopifyOrderId, factory_reference: data.factoryReference,
+          upload_mode: data.uploadMode, status: data.status,
+        });
+      },
       logInfo: async () => {}, logWarning: async () => {},
     };
     const config = { FTP_REMOTE_DIR: '/factory', FTP_UPLOAD_TASK_MAX_ATTEMPTS: 3 };
@@ -571,9 +622,80 @@ try {
     assert.equal(recovery.tasksReconciled, 1);
     assert.equal(state.task.status, 'pending');
     assert.equal(state.task.job_id, null);
+    assert.equal(order.status, 'completed');
+    assert.equal(statusWrites, 1);
     const repeatedRecovery = await reconcileFactoryOrders({ config, runtime: recoveryRuntime });
     assert.equal(repeatedRecovery.packagesReconciled, 0);
     assert.equal(repeatedRecovery.tasksReconciled, 0);
+    assert.equal(order.status, 'completed');
+    assert.equal(statusWrites, 1, 'Already-completed orders need no status write');
+
+    // Reuse repairs the legacy stale status without creating another package/task.
+    const savedState = structuredClone(state);
+    order.status = fixture.wallpaper.length ? 'processing' : 'received';
+    const reused = await ensureOrderFactoryPackage({ orderId: order.id, config, runtime });
+    assert.equal(reused.created, false);
+    assert.equal(reused.taskCreated, false);
+    assert.equal(reused.order.status, 'completed');
+    assert.equal(order.status, 'completed');
+    assert.deepEqual(state, savedState);
+
+    if (fixture.id === 11) {
+      for (const reuse of [false, true]) {
+        for (const status of [
+          'received', 'validated', 'queued', 'processing', 'artifact_ready',
+          'completed', 'manual_review', 'failed', 'factory_received',
+          'production_started', 'production_completed', 'ready_for_shipping',
+          'shipped', 'cancelled', 'unknown_future_state', null, undefined,
+        ]) {
+          Object.assign(state, reuse ? structuredClone(savedState) : {
+            artifact: null, package: null, task: null,
+          });
+          order.status = status;
+          const writesBefore = statusWrites;
+          const run = () => ensureOrderFactoryPackage({ orderId: order.id, config, runtime });
+          if (status === 'manual_review') {
+            // The existing dispatch gate must still block this order.
+            if (reuse) {
+              await assert.rejects(run, /manual_review/);
+            } else {
+              const blocked = await run();
+              assert.equal(blocked.disposition, 'not_ready');
+              assert.equal(blocked.reason, 'order_requires_manual_review');
+            }
+          } else {
+            const result = await run();
+            assert.equal(result.created, !reuse);
+            assert.equal(result.order.status, order.status);
+          }
+          const repairable = ['received', 'validated', 'queued', 'processing', 'artifact_ready'].includes(status);
+          assert.equal(order.status, repairable ? 'completed' : status);
+          assert.equal(statusWrites - writesBefore, repairable ? 1 : 0);
+        }
+
+        // Fail before status repair, during the write, and at commit. Both
+        // creation and reuse must roll back the status and all related records.
+        for (const point of ['task', 'status', 'commit']) {
+          Object.assign(state, reuse ? structuredClone(savedState) : {
+            artifact: null, package: null, task: null,
+          });
+          if (point === 'task') state.task = null;
+          order.status = 'received';
+          const before = structuredClone({ ...state, order });
+          const writesBefore = statusWrites;
+          const rollbacksBefore = rollbacks;
+          failurePoint = point;
+          await assert.rejects(
+            ensureOrderFactoryPackage({ orderId: order.id, config, runtime }),
+            new RegExp('injected_' + point + '_failure')
+          );
+          failurePoint = undefined;
+          assert.deepEqual({ ...state, order }, before);
+          assert.equal(statusWrites - writesBefore, point === 'task' ? 0 : 1);
+          assert.equal(rollbacks, rollbacksBefore + 1);
+        }
+      }
+    }
   }
   for (const xml of [
     '<positions></positions>',

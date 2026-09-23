@@ -1,4 +1,5 @@
 import env from '../config/env.js';
+import { ORDER_STATUSES } from '../constants/statuses.js';
 import pool from '../db/connection.js';
 import {
   createArtifact,
@@ -11,7 +12,7 @@ import {
   findOrderFactoryPackageByOrderId,
 } from '../models/OrderFactoryPackageModel.js';
 import { listOrderLineItemsByOrderId } from '../models/OrderLineItemModel.js';
-import { findOrderByIdForUpdate } from '../models/OrderModel.js';
+import { findOrderByIdForUpdate, updateOrderStatus } from '../models/OrderModel.js';
 import {
   assembleOrderFactoryPackage,
   inspectOrderFactoryReadiness,
@@ -21,6 +22,16 @@ import { ensureOrderFactoryUploadTask } from './FactoryUploadTaskService.js';
 import { logInfo, logWarning } from './LogService.js';
 import { safeErrorForLog } from '../utils/redact.js';
 
+function canCompleteFactoryPackageOrder(status) {
+  return [
+    ORDER_STATUSES.RECEIVED,
+    ORDER_STATUSES.VALIDATED,
+    'queued',
+    ORDER_STATUSES.PROCESSING,
+    ORDER_STATUSES.ARTIFACT_READY,
+  ].includes(status);
+}
+
 export async function ensureOrderFactoryPackage({
   orderId,
   config = env,
@@ -28,6 +39,7 @@ export async function ensureOrderFactoryPackage({
 } = {}) {
   const getConnection = runtime.getConnection ?? (() => pool.getConnection());
   const findOrder = runtime.findOrderByIdForUpdate ?? findOrderByIdForUpdate;
+  const updateStatus = runtime.updateOrderStatus ?? updateOrderStatus;
   const findPackage =
     runtime.findOrderFactoryPackageByOrderId ??
     findOrderFactoryPackageByOrderId;
@@ -68,7 +80,7 @@ export async function ensureOrderFactoryPackage({
   try {
     await connection.beginTransaction();
     transactionStarted = true;
-    const order = await findOrder(orderId, connection);
+    let order = await findOrder(orderId, connection);
 
     if (!order) {
       throw new Error(`Order not found for factory package: ${orderId}`);
@@ -98,6 +110,11 @@ export async function ensureOrderFactoryPackage({
         throw new Error(
           taskResult.reason || 'existing_order_factory_task_not_ready'
         );
+      }
+
+      // The order is locked; publish callback readiness with the package/task.
+      if (canCompleteFactoryPackageOrder(order.status)) {
+        order = await updateStatus(order.id, ORDER_STATUSES.COMPLETED, connection);
       }
 
       await connection.commit();
@@ -243,6 +260,10 @@ export async function ensureOrderFactoryPackage({
 
     if (!taskResult.task) {
       throw new Error(taskResult.reason || 'order_factory_task_not_created');
+    }
+
+    if (canCompleteFactoryPackageOrder(order.status)) {
+      order = await updateStatus(order.id, ORDER_STATUSES.COMPLETED, connection);
     }
 
     await connection.commit();
