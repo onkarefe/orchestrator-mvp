@@ -72,10 +72,45 @@ assert.ok(unknownStatus.errors.includes('unsupported_nexo_status'));
 assert.equal(getNexoOrderStatus('cancelled'), 'manual_review');
 assert.equal(getNexoOrderStatus('error'), 'manual_review');
 assert.equal(getNexoStatusSequenceIssue(null, 'accepted'), null);
-assert.equal(
-  getNexoStatusSequenceIssue('accepted', 'printed'),
-  'nexo_status_out_of_order'
-);
+for (const [previous, next] of [
+  ['accepted', 'ready_to_print'],
+  ['accepted', 'printed'],
+  ['accepted', 'shipped'],
+  ['ready_to_print', 'printed'],
+  ['ready_to_print', 'shipped'],
+  ['printed', 'shipped'],
+]) {
+  assert.equal(getNexoStatusSequenceIssue(previous, next), null);
+}
+for (const [previous, next] of [
+  ['ready_to_print', 'accepted'],
+  ['printed', 'accepted'],
+  ['printed', 'ready_to_print'],
+  ['shipped', 'accepted'],
+  ['shipped', 'ready_to_print'],
+  ['shipped', 'printed'],
+]) {
+  assert.equal(getNexoStatusSequenceIssue(previous, next), 'nexo_status_out_of_order');
+}
+const normalStatuses = ['accepted', 'ready_to_print', 'printed', 'shipped'];
+const exceptionStatuses = ['cancelled', 'error'];
+for (const status of [...normalStatuses, ...exceptionStatuses]) {
+  assert.equal(getNexoStatusSequenceIssue(status, status), null);
+}
+for (const status of normalStatuses.slice(1)) {
+  assert.equal(getNexoStatusSequenceIssue(null, status), 'nexo_status_out_of_order');
+}
+for (const exception of exceptionStatuses) {
+  for (const previous of [null, ...normalStatuses.slice(0, -1)]) {
+    assert.equal(getNexoStatusSequenceIssue(previous, exception), null);
+  }
+  assert.equal(getNexoStatusSequenceIssue('shipped', exception), 'nexo_status_after_shipped');
+  for (const next of [...normalStatuses, ...exceptionStatuses]) {
+    if (next !== exception) {
+      assert.equal(getNexoStatusSequenceIssue(exception, next), 'nexo_status_after_terminal_status');
+    }
+  }
+}
 
 const missingReference = validateNexoCallbackPayload({
   timestamp: basePayload.timestamp,

@@ -328,7 +328,7 @@ export function getNexoStatusSequenceIssue(previousStatus, nextStatus) {
   const previousRank = NEXO_PROGRESS_RANK[previousStatus];
   const nextRank = NEXO_PROGRESS_RANK[nextStatus];
 
-  if (previousRank === undefined || nextRank !== previousRank + 1) {
+  if (previousRank === undefined || nextRank <= previousRank) {
     return 'nexo_status_out_of_order';
   }
 

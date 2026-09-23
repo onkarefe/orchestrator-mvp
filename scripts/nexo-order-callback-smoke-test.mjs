@@ -570,4 +570,51 @@ await listRecoverableNexoCallbackIds({
     return [[]];
   }},
 });
+// A new shipped delivery may skip both intermediate statuses.
+const jumpHarness = createHarness();
+await receive(jumpHarness, payload({ status: 'accepted', sequence: 1 }));
+
+// Historical sequence rejections stay held even though that jump is now legal.
+const historicalPayload = payload({
+  status: 'shipped', sequence: 2, trackingNumbers: shippedTracking,
+});
+const historicalCallback = await jumpHarness.runtime.createFactoryCallback({
+  provider: 'nexo',
+  orderId: jumpHarness.state.order.id,
+  orderFactoryPackageId: jumpHarness.state.orderPackage.id,
+  factoryReference: historicalPayload.reference,
+  shopifyOrderId: jumpHarness.state.order.shopify_order_id,
+  factoryOrderId: String(historicalPayload.job_id),
+  status: 'shipped',
+  rawPayloadJson: historicalPayload,
+  authValid: true,
+  processingStatus: 'manual_review',
+  errorMessage: 'nexo_status_out_of_order',
+});
+assert.equal((await replayNexoCallback(historicalCallback.id, {
+  runtime: jumpHarness.runtime,
+})).body.skipped, true);
+assert.equal(historicalCallback.processing_status, 'manual_review');
+assert.equal(jumpHarness.state.orderPackage.factory_status, 'accepted');
+assert.equal(jumpHarness.state.shopifyTasks.length, 0);
+
+const jumpPayload = payload({
+  status: 'shipped', sequence: 3, trackingNumbers: shippedTracking,
+});
+const jumpResult = await receive(jumpHarness, jumpPayload);
+assert.equal(jumpResult.httpStatus, 200);
+assert.equal(jumpResult.body.processingStatus, 'processed');
+assert.equal(jumpResult.body.shopifyUpdateTaskCreated, true);
+assert.equal(jumpHarness.state.orderPackage.factory_status, 'shipped');
+assert.equal(jumpHarness.state.order.status, 'shipped');
+assert.equal(jumpHarness.state.shopifyTasks.length, 1);
+assert.equal(jumpHarness.state.shopifyTasks[0].task_type, 'order_shipped');
+
+assert.equal((await receive(jumpHarness, jumpPayload)).body.duplicate, true);
+assert.equal((await receive(jumpHarness, payload({
+  status: 'shipped', sequence: 4, trackingNumbers: shippedTracking,
+}))).body.duplicate, true);
+assert.equal(jumpHarness.state.shopifyTasks.length, 1);
+assert.equal(jumpHarness.state.shopifyTasks[0].id, jumpResult.body.shopifyUpdateTaskId);
+
 console.log('order-level NEXO callback safety smoke ok');
