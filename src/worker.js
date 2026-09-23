@@ -1,5 +1,6 @@
 import {
   getSafeStartupConfigSummary,
+  validateCheckoutSecurityStartupEnv,
   validateFtpUploadStartupEnv,
   validateShopifyWebhookStartupEnv,
   validateWallpaperSkuStartupEnv,
@@ -140,6 +141,7 @@ async function stop(signal) {
   }
 }
 
+validateCheckoutSecurityStartupEnv();
 validateFtpUploadStartupEnv();
 validateShopifyWebhookStartupEnv();
 validateWallpaperSkuStartupEnv();

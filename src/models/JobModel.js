@@ -267,6 +267,7 @@ export async function claimNextPendingJob(options = {}) {
     const [rows] = await connection.execute(
       `SELECT * FROM jobs
       WHERE status = ?
+        AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = jobs.order_id AND o.status = 'SECURITY_HOLD')
         AND COALESCE(attempt_count, 0) < COALESCE(max_attempts, ?)
       ORDER BY created_at ASC, id ASC
       LIMIT 1
@@ -292,6 +293,7 @@ export async function claimNextPendingJob(options = {}) {
         last_error = NULL
       WHERE id = ?
         AND status = ?
+        AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = jobs.order_id AND o.status = 'SECURITY_HOLD')
         AND COALESCE(attempt_count, 0) < COALESCE(max_attempts, ?)`,
       [
         JOB_STATUSES.PROCESSING,
@@ -338,6 +340,7 @@ export async function claimPendingJobById(id, options = {}) {
         last_error = NULL
       WHERE id = ?
         AND status = ?
+        AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = jobs.order_id AND o.status = 'SECURITY_HOLD')
         AND COALESCE(attempt_count, 0) < COALESCE(max_attempts, ?)`,
       [
         JOB_STATUSES.PROCESSING,
@@ -522,6 +525,7 @@ export async function releaseStaleProcessingJobs({
       locked_by = NULL
     WHERE status = ?
       AND locked_at IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = jobs.order_id AND o.status = 'SECURITY_HOLD')
       AND locked_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ? MINUTE)
       AND COALESCE(attempt_count, 0) < COALESCE(max_attempts, ?)`,
     [
@@ -542,6 +546,7 @@ export async function releaseStaleProcessingJobs({
       completed_at = CURRENT_TIMESTAMP
     WHERE status = ?
       AND locked_at IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = jobs.order_id AND o.status = 'SECURITY_HOLD')
       AND locked_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ? MINUTE)
       AND COALESCE(attempt_count, 0) >= COALESCE(max_attempts, ?)`,
     [

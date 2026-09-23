@@ -33,6 +33,7 @@ export async function listOrdersMissingFactoryPackage({
     FROM orders o
     WHERE o.shopify_order_id IS NOT NULL
       AND o.status <> ?
+      AND o.status <> 'SECURITY_HOLD'
       AND JSON_LENGTH(o.raw_payload_json, '$.line_items') > 0
       AND NOT EXISTS (
         SELECT 1 FROM order_factory_packages p WHERE p.order_id = o.id
@@ -107,6 +108,7 @@ export async function listOrdersWithPackageMissingFactoryTask({
   const params = [safeLimit];
   const sql = `SELECT p.order_id
     FROM order_factory_packages p
+    INNER JOIN orders o ON o.id = p.order_id AND o.status <> 'SECURITY_HOLD'
     INNER JOIN artifacts a ON a.id = p.artifact_id
     LEFT JOIN factory_upload_tasks t
       ON t.order_factory_package_id = p.id

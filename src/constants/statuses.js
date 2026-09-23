@@ -9,6 +9,7 @@ export const STATUS_GROUPS = Object.freeze({
 });
 
 export const ORDER_STATUSES = Object.freeze({
+  SECURITY_HOLD: 'SECURITY_HOLD',
   RECEIVED: 'received',
   VALIDATED: 'validated',
   PROCESSING: 'processing',

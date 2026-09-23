@@ -236,6 +236,11 @@ async function processClaimedJob(job, { workerId = getWorkerId() } = {}) {
       throw new Error(`Related order not found for job: ${job.id}`);
     }
 
+    if (order.status === ORDER_STATUSES.SECURITY_HOLD) {
+      await markJobFailed(job.id, 'checkout_security_hold', job);
+      return terminalResult(job, 'checkout_security_hold');
+    }
+
     const lineItem = await findOrderLineItemByIdentity(
       order.shopify_order_id,
       job.shopify_line_item_id,

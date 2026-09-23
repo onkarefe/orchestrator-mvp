@@ -86,6 +86,13 @@ export async function ensureOrderFactoryPackage({
       throw new Error(`Order not found for factory package: ${orderId}`);
     }
 
+    if (order.status === ORDER_STATUSES.SECURITY_HOLD) {
+      await connection.commit();
+      transactionStarted = false;
+      return { disposition: 'not_ready', created: false, reason: 'checkout_security_hold',
+        order, orderPackage: null, artifact: null, task: null };
+    }
+
     const lineItems = await listLineItems(order.id, connection);
     const existingPackage = await findPackage(order.id, connection, {
       forUpdate: true,

@@ -38,6 +38,7 @@ function normalizeOrder(row) {
   return {
     ...row,
     raw_payload_json: parseJson(row.raw_payload_json),
+    checkout_security_json: parseJson(row.checkout_security_json),
   };
 }
 
@@ -169,7 +170,7 @@ export async function listOrders({ status, limit, offset } = {}) {
 export async function updateOrderStatus(id, status, db = pool) {
   const executor = getExecutor(db);
 
-  await executor.execute('UPDATE orders SET status = ? WHERE id = ?', [status, id]);
+  await executor.execute("UPDATE orders SET status = ? WHERE id = ? AND status <> 'SECURITY_HOLD'", [status, id]);
 
   return findOrderById(id, executor);
 }
@@ -219,7 +220,7 @@ export async function updateOrderFactoryState(id, data = {}, db = pool) {
   params.push(id);
 
   await executor.execute(
-    `UPDATE orders SET ${updates.join(', ')} WHERE id = ?`,
+    `UPDATE orders SET ${updates.join(', ')} WHERE id = ? AND status <> 'SECURITY_HOLD'`,
     params
   );
 
@@ -234,7 +235,7 @@ export async function updateOrderManualReview(
   const executor = getExecutor(db);
 
   await executor.execute(
-    'UPDATE orders SET status = ?, manual_review_reason = ? WHERE id = ?',
+    "UPDATE orders SET status = ?, manual_review_reason = ? WHERE id = ? AND status <> 'SECURITY_HOLD'",
     ['manual_review', manualReviewReason, id]
   );
 

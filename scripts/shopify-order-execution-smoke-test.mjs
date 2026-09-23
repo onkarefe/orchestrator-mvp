@@ -517,4 +517,9 @@ exhaustedThrottle.task.attempt_count = exhaustedThrottle.task.max_attempts;
 exhaustedThrottle.graphqlClient.request = async () => throttledResult;
 assert.equal((await executeFailureThroughWorker(exhaustedThrottle)).results[0].disposition, 'failed');
 
+const heldHarness = createHarness();
+const heldOrder = await heldHarness.runtime.findOrderById(orderId);
+heldHarness.runtime.findOrderById = async () => ({ ...heldOrder, status: 'SECURITY_HOLD' });
+heldHarness.graphqlClient.request = async () => assert.fail('Held order must not call Shopify');
+assert.equal((await execute(heldHarness)).disposition, 'manual_review');
 console.log('Shopify whole-order execution smoke ok');

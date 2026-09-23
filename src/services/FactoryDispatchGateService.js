@@ -27,6 +27,9 @@ function normalizedIdentity(value) {
 }
 
 export function evaluateFactoryDispatchGate({ order, lineItems } = {}) {
+  if (order?.status === ORDER_STATUSES.SECURITY_HOLD) {
+    return { allowed: false, reason: 'checkout_security_hold' };
+  }
   const shippingValidation = validateShopifyShippingAddress(
     order?.raw_payload_json
   );

@@ -15,6 +15,17 @@ function hasConfiguredSecret(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+export function validateCheckoutSecurityStartupEnv(config = env) {
+  const mode = config.CHECKOUT_SECURITY_GATE_MODE ?? 'off';
+  if (!['off', 'report', 'enforce'].includes(mode)) {
+    throw new Error('CHECKOUT_SECURITY_GATE_MODE must be off, report, or enforce');
+  }
+  if (mode === 'enforce' && !hasConfiguredSecret(config.WANDINI_CHECKOUT_HMAC_SECRET)) {
+    throw new Error('WANDINI_CHECKOUT_HMAC_SECRET is required in enforce mode');
+  }
+  return true;
+}
+
 export function validateFtpUploadStartupEnv(config = env) {
   const errors = [];
 
@@ -131,6 +142,7 @@ export function validateShopifyWebhookStartupEnv(config = env) {
 }
 
 export function validateServerStartupEnv(config = env) {
+  validateCheckoutSecurityStartupEnv(config);
   const errors = [];
   const allowlist = parseShopifyWriteOrderAllowlist(
     config.SHOPIFY_WRITE_ORDER_ALLOWLIST

@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "test:shopify-webhook-retry": "node scripts/shopify-webhook-retry-smoke-test.mjs",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node scripts/run-smoke-tests.mjs",
     "test:xml-smoke": "node scripts/xml-smoke-test.mjs",
     "test:phase2-safety": "node scripts/phase2-safety-smoke-test.mjs",
     "test:nexo-adapter": "node scripts/nexo-adapter-smoke-test.mjs",
@@ -16,7 +16,8 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "worker": "node src/worker.js",
-    "migrate": "node scripts/migrate.js"
+    "migrate": "node scripts/migrate.js",
+    "test:checkout-security": "node scripts/checkout-security-smoke-test.mjs"
   },
   "keywords": [],
   "author": "",

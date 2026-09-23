@@ -1,4 +1,7 @@
 import { ORDER_STATUSES } from '../constants/statuses.js';
+import env from '../config/env.js';
+import { checkoutGateMode, evaluateCheckoutSecurity } from './CheckoutSecurityService.js';
+import { recordCheckoutSecurity } from '../models/CheckoutSecurityModel.js';
 import pool from '../db/connection.js';
 import { isDuplicateKeyError } from '../db/errors.js';
 import {
@@ -45,7 +48,11 @@ function getCustomerName(payload) {
 
 async function writeInfoLogs(logEvents) {
   for (const logEvent of logEvents) {
-    await logInfo(logEvent);
+    if (logEvent.checkoutAdvisory) {
+      await Promise.resolve().then(() => logInfo(logEvent)).catch(() => null);
+    } else {
+      await logInfo(logEvent);
+    }
   }
 }
 
@@ -85,14 +92,16 @@ export function getOrderPreflightDisposition({
   };
 }
 
-export async function createOrderAndJobsFromShopifyPayload(payload) {
+export async function createOrderAndJobsFromShopifyPayload(payload, { config = env, runtime = {} } = {}) {
   const shopifyOrderId = payload?.id;
 
   if (!shopifyOrderId) {
     throw new Error('Shopify order id is required');
   }
 
-  const connection = await pool.getConnection();
+  const connection = await (runtime.getConnection ?? (() => pool.getConnection()))();
+  const createConfiguratorJob = runtime.createConfiguratorJobFromLineItem ?? createConfiguratorJobFromLineItem;
+  const classifyLine = runtime.classifyShopifyLineItem ?? classifyShopifyLineItem;
   const logEvents = [];
   let transactionStarted = false;
   let connectionReleased = false;
@@ -167,6 +176,38 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
       },
     });
 
+    const mode = checkoutGateMode(config);
+    if (mode !== 'off') {
+      const validation = evaluateCheckoutSecurity(payload, config);
+      const security = await recordCheckoutSecurity(order.id, {
+        ...validation,
+        mode,
+        detectedAt: new Date().toISOString(),
+        shopifyOrderId: String(shopifyOrderId),
+        externalOrderNumber: String(order.shopify_order_number ?? '').slice(0, 191),
+        sourceName: typeof payload.source_name === 'string' && /^[A-Za-z0-9_.:-]{1,100}$/.test(payload.source_name)
+          ? payload.source_name : null,
+      }, connection);
+      order = security.order;
+      const securityEvent = {
+        scopeType: 'order', orderId: order.id,
+        step: security.held ? 'checkout.security_hold' : 'checkout.validation',
+        message: security.held ? 'SECURITY_HOLD: checkout validation failed; factory pipeline blocked' : 'Checkout security evaluated',
+        detailsJson: security.decision,
+      };
+      if (security.held) {
+        await connection.commit();
+        transactionStarted = false;
+        releaseConnection();
+        // The durable operator alert is the order row. Logging cannot undo it
+        // or turn a security rejection into a retrying poison message.
+        await Promise.resolve().then(() => logInfo(securityEvent)).catch(() => null);
+        return { order, jobs: [], created: true, duplicate: false,
+          skippedDuplicateJobs: [], manualReviewJobs: [], lineItems: [], securityHold: true };
+      }
+      logEvents.push({ ...securityEvent, checkoutAdvisory: true });
+    }
+
     const jobs = [];
     const skippedDuplicateJobs = [];
     const manualReviewJobs = [];
@@ -192,7 +233,7 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
     }
 
     for (const [sourcePosition, lineItem] of lineItems.entries()) {
-      const routing = classifyShopifyLineItem(lineItem);
+      const routing = classifyLine(lineItem);
       const persisted = await createOrderLineItem(
         {
           orderId: order.id,
@@ -252,7 +293,7 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
         continue;
       }
 
-      const result = await createConfiguratorJobFromLineItem(
+      const result = await createConfiguratorJob(
         order.id,
         lineItem,
         {

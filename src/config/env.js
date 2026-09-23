@@ -97,6 +97,8 @@ const shopifyWriteOrderAllowlist = parseShopifyWriteOrderAllowlist(
   process.env.SHOPIFY_WRITE_ORDER_ALLOWLIST
 );
 const env = {
+  CHECKOUT_SECURITY_GATE_MODE: stringFromEnv('CHECKOUT_SECURITY_GATE_MODE', 'off'),
+  WANDINI_CHECKOUT_HMAC_SECRET: process.env.WANDINI_CHECKOUT_HMAC_SECRET ?? '',
   PORT: Number(process.env.PORT || 3000),
   DB_HOST: process.env.DB_HOST || '127.0.0.1',
   DB_PORT: Number(process.env.DB_PORT || 3306),

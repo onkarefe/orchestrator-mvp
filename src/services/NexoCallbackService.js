@@ -732,6 +732,10 @@ async function processValidatedNexoCallback({
       });
     }
 
+    if (order.status === 'SECURITY_HOLD') {
+      return await finishManualReview({ errorMessage: 'checkout_security_hold', orderId: order.id });
+    }
+
     const matchingPackages =
       await runtime.findOrderFactoryPackageByShopifyOrderIdForUpdate(
         normalized.referenceParts.shopifyOrderId,

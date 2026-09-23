@@ -37,6 +37,7 @@ const ORDER_STATUS_RANK = Object.freeze({
 
 const TERMINAL_STATUSES_BY_GROUP = Object.freeze({
   [STATUS_GROUPS.ORDER]: Object.freeze([
+    ORDER_STATUSES.SECURITY_HOLD,
     ORDER_STATUSES.MANUAL_REVIEW,
     ORDER_STATUSES.FAILED,
     ORDER_STATUSES.SHIPPED,
@@ -201,6 +202,7 @@ function canTransitionOrder(fromStatus, toStatus) {
 
   if (
     toStatus === ORDER_STATUSES.MANUAL_REVIEW ||
+    toStatus === ORDER_STATUSES.SECURITY_HOLD ||
     toStatus === ORDER_STATUSES.FAILED
   ) {
     return true;

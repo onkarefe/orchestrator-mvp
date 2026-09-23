@@ -17,6 +17,17 @@
     </span>
   </header>
 
+  <% if (order.checkout_security_json) { const security = order.checkout_security_json; %>
+    <section class="card" role="status">
+      <h2>Checkout security: <%= security.result %></h2>
+      <p>Mode: <%= security.mode %> | Detected: <%= security.detectedAt %></p>
+      <p>Reason: <%= display(security.reason) %> | Source: <%= display(security.sourceName) %></p>
+      <% if (order.status === 'SECURITY_HOLD') { %>
+        <p><strong>Factory processing is blocked. Automatic recovery cannot release this hold.</strong></p>
+      <% } %>
+    </section>
+  <% } %>
+
   <div class="detail-grid">
     <section class="card">
       <div class="card-header">

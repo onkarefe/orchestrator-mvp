@@ -617,4 +617,15 @@ assert.equal((await receive(jumpHarness, payload({
 assert.equal(jumpHarness.state.shopifyTasks.length, 1);
 assert.equal(jumpHarness.state.shopifyTasks[0].id, jumpResult.body.shopifyUpdateTaskId);
 
+// A held order cannot be revived, including same-status shipped replay.
+for (const priorStatus of [null, 'shipped']) {
+  const held = createHarness();
+  held.state.order.status = 'SECURITY_HOLD';
+  held.state.orderPackage.factory_status = priorStatus;
+  const outcome = await receive(held, payload({ status: 'shipped', trackingNumbers: shippedTracking }));
+  assert.equal(outcome.body.error, 'checkout_security_hold');
+  assert.equal(held.state.order.status, 'SECURITY_HOLD');
+  assert.equal(held.state.orderPackage.factory_status, priorStatus);
+  assert.equal(held.state.shopifyTasks.length, 0);
+}
 console.log('order-level NEXO callback safety smoke ok');

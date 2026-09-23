@@ -26,6 +26,10 @@ export function buildOrderMonitoring({
   now = new Date(),
 } = {}) {
   const anomalies = [];
+  if (order?.status === 'SECURITY_HOLD') {
+    anomalies.push(anomaly('checkout_security_hold',
+      'SECURITY_HOLD: checkout proof failed. Factory processing is blocked.', 'critical'));
+  }
   const wallpaperLines = lineItems.filter(
     (lineItem) => lineItem.classification === 'WALLPAPER'
   );
