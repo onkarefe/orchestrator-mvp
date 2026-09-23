@@ -49,10 +49,19 @@ export async function ensureOrderFactoryPackage({
   const removePackage =
     runtime.removeAssembledOrderFactoryPackage ??
     removeAssembledOrderFactoryPackage;
-  const writeInfoLog = runtime.logInfo ?? logInfo;
-  const writeWarningLog = runtime.logWarning ?? logWarning;
+  const writeInfoLog = (data) => Promise.resolve()
+    .then(() => (runtime.logInfo ?? logInfo)(data)).catch(() => null);
+  const writeWarningLog = (data) => Promise.resolve()
+    .then(() => (runtime.logWarning ?? logWarning)(data)).catch(() => null);
   const connection = await getConnection();
   let transactionStarted = false;
+  let connectionReleased = false;
+  const releaseConnection = () => {
+    if (!connectionReleased) {
+      connection.release();
+      connectionReleased = true;
+    }
+  };
   let assembled = null;
   let packageCommitted = false;
 
@@ -93,6 +102,7 @@ export async function ensureOrderFactoryPackage({
 
       await connection.commit();
       transactionStarted = false;
+      releaseConnection();
       await writeInfoLog({
         scopeType: 'order',
         orderId: order.id,
@@ -128,6 +138,7 @@ export async function ensureOrderFactoryPackage({
     if (!readiness.ready) {
       await connection.commit();
       transactionStarted = false;
+      releaseConnection();
       await writeWarningLog({
         scopeType: 'order',
         orderId: order.id,
@@ -158,6 +169,7 @@ export async function ensureOrderFactoryPackage({
     } catch (error) {
       await connection.commit();
       transactionStarted = false;
+      releaseConnection();
       await writeWarningLog({
         scopeType: 'order',
         orderId: order.id,
@@ -236,6 +248,7 @@ export async function ensureOrderFactoryPackage({
     await connection.commit();
     transactionStarted = false;
     packageCommitted = true;
+    releaseConnection();
     await writeInfoLog({
       scopeType: 'order',
       orderId: order.id,
@@ -264,6 +277,7 @@ export async function ensureOrderFactoryPackage({
     if (transactionStarted) {
       await connection.rollback();
       transactionStarted = false;
+      releaseConnection();
     }
 
     if (
@@ -276,7 +290,7 @@ export async function ensureOrderFactoryPackage({
 
     throw error;
   } finally {
-    connection.release();
+    releaseConnection();
   }
 }
 

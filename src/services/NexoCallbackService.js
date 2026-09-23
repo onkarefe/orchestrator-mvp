@@ -12,6 +12,9 @@ import { isDuplicateKeyError } from '../db/errors.js';
 import { findArtifactById } from '../models/ArtifactModel.js';
 import {
   createFactoryCallback,
+  findFactoryCallbackByIdForUpdate,
+  RECOVERABLE_NEXO_CALLBACK_REASONS,
+  holdNexoReplayTaskConflict,
   findLatestNexoCallbackByPackageAndStatus,
   findOriginalFactoryCallbackByDeliveryId,
   updateFactoryCallbackProcessingStatus,
@@ -59,6 +62,8 @@ const FACTORY_ORDER_STATUS_RANK = Object.freeze({
 
 const DEFAULT_RUNTIME = Object.freeze({
   getConnection: () => pool.getConnection(),
+  holdNexoReplayTaskConflict,
+  findFactoryCallbackByIdForUpdate,
   createFactoryCallback,
   findArtifactById,
   findFactoryUploadTaskByOrderPackageId,
@@ -366,15 +371,18 @@ function getPackageRelationshipIssue({
   }
 
   if (
-    !uploadTask ||
-    uploadTask.status !== FACTORY_UPLOAD_TASK_STATUSES.UPLOADED ||
-    String(uploadTask.order_factory_package_id) !== String(orderPackage.id) ||
-    String(uploadTask.order_id) !== String(order.id) ||
-    String(uploadTask.artifact_id) !== String(orderPackage.artifact_id) ||
-    String(uploadTask.shopify_order_id) !== String(order.shopify_order_id) ||
-    uploadTask.factory_reference !== orderPackage.order_number ||
-    uploadTask.job_id !== null
+    uploadTask && (
+      String(uploadTask.order_factory_package_id) !== String(orderPackage.id) ||
+      String(uploadTask.order_id) !== String(order.id) ||
+      String(uploadTask.artifact_id) !== String(orderPackage.artifact_id) ||
+      String(uploadTask.shopify_order_id) !== String(order.shopify_order_id) ||
+      uploadTask.factory_reference !== orderPackage.order_number ||
+      uploadTask.job_id !== null
+    )
   ) {
+    return 'order_factory_upload_identity_mismatch';
+  }
+  if (!uploadTask || uploadTask.status !== FACTORY_UPLOAD_TASK_STATUSES.UPLOADED) {
     return 'order_factory_package_not_dispatched';
   }
 
@@ -534,6 +542,22 @@ export async function receiveNexoCallback({
     };
   }
 
+  return processValidatedNexoCallback({
+    runtime, auth, payload, headers, normalized, deliveryIdentity,
+  });
+}
+
+// Replay uses durable proof of successful authentication, never stored/redacted secrets.
+export async function replayNexoCallback(callbackId, { runtime = {} } = {}) {
+  return processValidatedNexoCallback({
+    runtime: callbackRuntime(runtime), replayCallbackId: callbackId,
+  });
+}
+
+async function processValidatedNexoCallback({
+  runtime, auth, payload, headers, normalized, deliveryIdentity,
+  replayCallbackId = null,
+}) {
   const connection = await runtime.getConnection();
   let transactionStarted = false;
   let matchedOrderId = null;
@@ -550,6 +574,48 @@ export async function receiveNexoCallback({
     await connection.beginTransaction();
     transactionStarted = true;
 
+    let replayCallback = null;
+    if (replayCallbackId !== null) {
+      replayCallback = await runtime.findFactoryCallbackByIdForUpdate(
+        replayCallbackId, connection
+      );
+      if (
+        !replayCallback || replayCallback.provider !== NEXO_PROVIDER ||
+        ![true, 1].includes(replayCallback.auth_valid) ||
+        replayCallback.processing_status !== FACTORY_CALLBACK_PROCESSING_STATUSES.MANUAL_REVIEW ||
+        !RECOVERABLE_NEXO_CALLBACK_REASONS.includes(replayCallback.error_message)
+      ) {
+        await connection.commit();
+        transactionStarted = false;
+        releaseConnection();
+        return { httpStatus: 200, body: { skipped: true, callbackId: replayCallbackId } };
+      }
+      payload = replayCallback.raw_payload_json;
+      const validation = validateNexoCallbackPayload(payload);
+      normalized = validation.normalized;
+      if (
+        !validation.ok ||
+        normalized.reference !== replayCallback.factory_reference ||
+        normalized.nexoJobId !== String(replayCallback.factory_order_id) ||
+        normalized.status !== replayCallback.status ||
+        normalized.referenceParts?.shopifyOrderId !== String(replayCallback.shopify_order_id)
+      ) {
+        await runtime.updateFactoryCallbackProcessingStatus(replayCallback.id, {
+          processingStatus: FACTORY_CALLBACK_PROCESSING_STATUSES.MANUAL_REVIEW,
+          errorMessage: 'nexo_replay_payload_identity_mismatch',
+        }, connection);
+        await connection.commit();
+        transactionStarted = false;
+        releaseConnection();
+        return { httpStatus: 202, body: {
+          callbackId: replayCallback.id, error: 'nexo_replay_payload_identity_mismatch',
+        } };
+      }
+      auth = { authValid: true };
+      headers = {};
+      deliveryIdentity = { deliveryId: replayCallback.delivery_id };
+    }
+
     const originalDelivery = await runtime.findOriginalFactoryCallbackByDeliveryId(
       deliveryIdentity.deliveryId,
       connection,
@@ -557,6 +623,23 @@ export async function receiveNexoCallback({
     );
 
     if (originalDelivery) {
+      if (replayCallback) {
+        const sameEvent = hasSameNexoEventSemantics(originalDelivery, normalized);
+        await runtime.updateFactoryCallbackProcessingStatus(replayCallback.id, {
+          processingStatus: sameEvent
+            ? FACTORY_CALLBACK_PROCESSING_STATUSES.DUPLICATE
+            : FACTORY_CALLBACK_PROCESSING_STATUSES.MANUAL_REVIEW,
+          duplicateOfId: originalDelivery.id,
+          errorMessage: sameEvent ? null : 'nexo_delivery_id_payload_mismatch',
+        }, connection);
+        await connection.commit();
+        transactionStarted = false;
+        releaseConnection();
+        return { httpStatus: sameEvent ? 200 : 202, body: {
+          callbackId: replayCallback.id, duplicate: sameEvent,
+          error: sameEvent ? null : 'nexo_delivery_id_payload_mismatch',
+        } };
+      }
       await connection.commit();
       transactionStarted = false;
       releaseConnection();
@@ -571,7 +654,7 @@ export async function receiveNexoCallback({
       });
     }
 
-    const callback = await runtime.createFactoryCallback(
+    const callback = replayCallback ?? await runtime.createFactoryCallback(
       callbackRecordData({
         payload,
         headers,
@@ -990,6 +1073,16 @@ export async function receiveNexoCallback({
 
     releaseConnection();
 
+    if (replayCallbackId !== null) {
+      if (error?.code === 'NEXO_SHOPIFY_TASK_IDEMPOTENCY_CONFLICT') {
+        await runtime.holdNexoReplayTaskConflict(replayCallbackId);
+        return { httpStatus: 202, body: {
+          callbackId: replayCallbackId,
+          error: 'nexo_shopify_task_idempotency_conflict',
+        } };
+      }
+      throw error;
+    }
     if (isDuplicateKeyError(error)) {
       const originalDelivery =
         await runtime.findOriginalFactoryCallbackByDeliveryId(
@@ -1083,5 +1176,6 @@ export async function receiveNexoCallback({
 export default {
   authenticateNexoCallback,
   receiveNexoCallback,
+  replayNexoCallback,
   recordNexoTransportFailure,
 };

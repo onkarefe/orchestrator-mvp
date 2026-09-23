@@ -577,6 +577,13 @@ export async function receiveFactoryCallback({ payload, headers }) {
   const normalized = validation.normalized;
   const connection = await pool.getConnection();
   let transactionStarted = false;
+  let connectionReleased = false;
+  const releaseConnection = () => {
+    if (!connectionReleased) {
+      connection.release();
+      connectionReleased = true;
+    }
+  };
 
   try {
     await connection.beginTransaction();
@@ -591,6 +598,7 @@ export async function receiveFactoryCallback({ payload, headers }) {
       if (originalCallback) {
         await connection.commit();
         transactionStarted = false;
+        releaseConnection();
         return buildDuplicateCallbackResult(originalCallback, normalized);
       }
     }
@@ -616,6 +624,7 @@ export async function receiveFactoryCallback({ payload, headers }) {
 
       await connection.commit();
       transactionStarted = false;
+      releaseConnection();
 
       await logCallbackManualReview(
         updatedCallback,
@@ -647,6 +656,7 @@ export async function receiveFactoryCallback({ payload, headers }) {
 
       await connection.commit();
       transactionStarted = false;
+      releaseConnection();
 
       await logCallbackManualReview(
         updatedCallback,
@@ -680,6 +690,7 @@ export async function receiveFactoryCallback({ payload, headers }) {
 
       await connection.commit();
       transactionStarted = false;
+      releaseConnection();
 
       await logCallbackManualReview(updatedCallback, unsafeReason, order.id);
 
@@ -735,6 +746,7 @@ export async function receiveFactoryCallback({ payload, headers }) {
 
     await connection.commit();
     transactionStarted = false;
+    releaseConnection();
 
     await logInfo({
       scopeType: 'order',
@@ -779,6 +791,8 @@ export async function receiveFactoryCallback({ payload, headers }) {
       transactionStarted = false;
     }
 
+    releaseConnection();
+
     if (normalized.deliveryId && isDuplicateKeyError(error)) {
       const originalCallback = await findOriginalFactoryCallbackByDeliveryId(
         normalized.deliveryId
@@ -791,7 +805,7 @@ export async function receiveFactoryCallback({ payload, headers }) {
 
     throw error;
   } finally {
-    connection.release();
+    releaseConnection();
   }
 }
 

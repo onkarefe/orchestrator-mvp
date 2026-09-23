@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import { ShopifyGraphQLClient } from '../src/services/ShopifyGraphQLClient.js';
 
 import { SHOPIFY_UPDATE_TASK_STATUSES } from '../src/constants/statuses.js';
 import { buildNexoShopifyTaskIdempotencyKey } from '../src/services/NexoCallbackAdapter.js';
@@ -472,5 +473,48 @@ assert.match(
   idempotencyMigration,
   /uq_shopify_update_tasks_idempotency_key/
 );
+
+// Exercise HTTP-200 GraphQL throttling through the real client normalizer;
+// fetch and authentication are entirely local stubs.
+const throttleClient = new ShopifyGraphQLClient({
+  config: { SHOPIFY_ADMIN_API_VERSION: '2026-01', SHOPIFY_SHOP_DOMAIN: 'local-test.myshopify.com' },
+  authClient: { getAccessToken: async () => 'local-stub-token' },
+  fetchImpl: async () => ({
+    ok: true, status: 200,
+    json: async () => ({ errors: [{ message: 'Throttled', extensions: { code: 'THROTTLED' } }] }),
+  }),
+});
+async function executeFailureThroughWorker(harness) {
+  return runShopifyUpdateExecutorOnce({
+    config: { ...liveConfig, SHOPIFY_UPDATE_TASK_BATCH_SIZE: 1 }, workerId,
+    graphqlClient: harness.graphqlClient,
+    runtime: {
+      ...harness.runtime,
+      releaseStaleShopifyUpdateTaskClaims: async () => ({ requeued: 0, failed: 0 }),
+      claimNextPendingShopifyUpdateTask: async () => harness.task,
+    },
+  });
+}
+const throttledResult = await throttleClient.request({ query: 'query { shop { id } }' });
+assert.equal(throttledResult.errors[0].code, 'THROTTLED');
+for (const [failure, retryable] of [
+  [throttledResult, true],
+  [{ errorType: 'graphql', httpStatus: 200, errors: [{ code: 'GRAPHQL_VALIDATION_FAILED' }] }, false],
+  [{ errorType: 'user_errors', httpStatus: 200, errors: [], userErrors: [{ code: 'THROTTLED' }] }, false],
+  [{ errorType: 'network' }, true],
+  [{ errorType: 'authentication' }, true],
+  [{ errorType: 'http', httpStatus: 429 }, true],
+  [{ errorType: 'http', httpStatus: 503 }, true],
+]) {
+  const harness = createHarness();
+  harness.graphqlClient.request = async () => ({ ok: false, ...failure });
+  await assert.rejects(execute(harness), (error) => error.retryable === retryable);
+  const result = await executeFailureThroughWorker(harness);
+  assert.equal(result.results[0].disposition, retryable ? 'retry_pending' : 'failed');
+}
+const exhaustedThrottle = createHarness();
+exhaustedThrottle.task.attempt_count = exhaustedThrottle.task.max_attempts;
+exhaustedThrottle.graphqlClient.request = async () => throttledResult;
+assert.equal((await executeFailureThroughWorker(exhaustedThrottle)).results[0].disposition, 'failed');
 
 console.log('Shopify whole-order execution smoke ok');

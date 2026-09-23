@@ -1,6 +1,5 @@
 import os from 'node:os';
 
-import { createArtifact } from '../models/ArtifactModel.js';
 import env from '../config/env.js';
 import { JOB_STATUSES, ORDER_STATUSES } from '../constants/statuses.js';
 import {
@@ -8,7 +7,7 @@ import {
   claimPendingJobById,
   findJobById,
   listJobs,
-  markJobCompletedWithArtifactManifest,
+  publishCompletedJobArtifact,
   markJobFailed,
   markJobPendingForRetry,
   releaseStaleProcessingJobs as releaseStaleProcessingJobsInModel,
@@ -175,15 +174,24 @@ async function handleClaimedJobFailure({
 }) {
   const disposition = getJobFailureDisposition(job);
 
-  if (disposition.final) {
-    await markJobFailed(job.id, errorMessage);
+  try {
+    if (disposition.final) {
+      await markJobFailed(job.id, errorMessage, job);
+    } else {
+      await markJobPendingForRetry(job.id, errorMessage, job);
+    }
+  } catch (error) {
+    if (error.code === 'JOB_CLAIM_LOST') {
+      return { ...disposition, lostOwnership: true };
+    }
+    throw error;
+  }
 
+  if (disposition.final) {
     if (order) {
       await updateOrderStatus(order.id, ORDER_STATUSES.FAILED);
     }
   } else {
-    await markJobPendingForRetry(job.id, errorMessage);
-
     if (order) {
       await refreshOrderStatusFromJobs(order.id);
     }
@@ -247,6 +255,9 @@ async function processClaimedJob(job, { workerId = getWorkerId() } = {}) {
           diskSpace,
         },
       });
+      if (disposition.lostOwnership) {
+        return terminalResult(job, 'job_claim_lost');
+      }
       const result = diskGuardResult(job, order, diskSpace);
 
       return {
@@ -274,7 +285,7 @@ async function processClaimedJob(job, { workerId = getWorkerId() } = {}) {
     });
 
     const result = await processJobToZip({ order, job, lineItem });
-    const artifact = await createArtifact({
+    const artifact = await publishCompletedJobArtifact(job, {
       orderId: order.id,
       jobId: job.id,
       type: 'zip',
@@ -289,10 +300,6 @@ async function processClaimedJob(job, { workerId = getWorkerId() } = {}) {
       validationStatus: result.validationResult?.validationStatus ?? 'pending',
     });
 
-    await markJobCompletedWithArtifactManifest(
-      job.id,
-      result.manifestPath
-    );
     order = await refreshOrderStatusFromJobs(order.id) ?? order;
 
     await logInfo({
@@ -366,6 +373,9 @@ async function processClaimedJob(job, { workerId = getWorkerId() } = {}) {
         : null,
     };
   } catch (error) {
+    if (error.code === 'JOB_CLAIM_LOST') {
+      return terminalResult(job, 'job_claim_lost');
+    }
     const errorMessage = error.message || 'job_processing_failed';
     const disposition = await handleClaimedJobFailure({
       job,
@@ -373,6 +383,9 @@ async function processClaimedJob(job, { workerId = getWorkerId() } = {}) {
       errorMessage,
     });
 
+    if (disposition.lostOwnership) {
+      return terminalResult(job, 'job_claim_lost');
+    }
     return failureResult(job, order, errorMessage, disposition);
   }
 }

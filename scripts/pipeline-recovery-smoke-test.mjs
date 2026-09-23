@@ -130,6 +130,7 @@ assert.match(missingPackageSql, /CASE WHEN li\.classification = \? THEN 1 ELSE 0
 assert.match(missingPackageSql, /j\.shopify_line_item_id = li\.shopify_line_item_id/);
 assert.match(missingPackageSql, /j\.sku = li\.sku/);
 assert.match(missingPackageSql, /o\.status <> \?/);
+assert.match(missingPackageSql, /BINARY a\.manifest_path = BINARY j\.artifact_manifest_path/);
 let missingTaskSql = null;
 await listOrdersWithPackageMissingFactoryTask({
   limit: 10,
@@ -282,6 +283,9 @@ const recoveryResult = await runPipelineRecovery({
       tasksReconciled: 0,
       skipped: 0,
       failed: 0,
+    }),
+    recoverNexoCallbacks: async () => ({
+      candidates: 0, recovered: 0, skipped: 0, failed: 0,
     }),
     logInfo: async (entry) => recoveryLogs.push(entry),
   },

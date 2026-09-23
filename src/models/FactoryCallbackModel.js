@@ -55,6 +55,48 @@ function normalizePagination(limit, offset) {
   };
 }
 
+export const RECOVERABLE_NEXO_CALLBACK_REASONS = Object.freeze([
+  'nexo_order_factory_package_not_found',
+  'order_factory_package_not_dispatched',
+]);
+
+export async function findFactoryCallbackByIdForUpdate(id, db) {
+  const [rows] = await getExecutor(db).execute(
+    'SELECT * FROM factory_callbacks WHERE id = ? LIMIT 1 FOR UPDATE', [id]
+  );
+  return normalizeFactoryCallback(rows[0]);
+}
+
+export async function holdNexoReplayTaskConflict(id, db = pool) {
+  // A concurrent successful replay must never be moved back to manual review.
+  const [result] = await getExecutor(db).execute(
+    `UPDATE factory_callbacks
+    SET error_message = 'nexo_shopify_task_idempotency_conflict'
+    WHERE id = ? AND provider = 'nexo' AND auth_valid = 1
+      AND processing_status = 'manual_review'
+      AND error_message IN (?, ?)`,
+    [id, ...RECOVERABLE_NEXO_CALLBACK_REASONS]
+  );
+  return result.affectedRows === 1;
+}
+
+export async function listRecoverableNexoCallbackIds({ limit = 25, db = pool } = {}) {
+  const safeLimit = Number.isSafeInteger(Number(limit)) && Number(limit) > 0
+    ? Math.min(Number(limit), 250) : 25;
+  const [rows] = await getExecutor(db).query(
+    `SELECT c.id FROM factory_callbacks c
+      INNER JOIN order_factory_packages p ON p.shopify_order_id = c.shopify_order_id
+      INNER JOIN factory_upload_tasks t ON t.order_factory_package_id = p.id
+      WHERE c.provider = 'nexo' AND c.auth_valid = 1
+        AND c.processing_status = 'manual_review'
+        AND c.error_message IN (?, ?)
+        AND p.status = 'ready' AND t.status = 'uploaded'
+      ORDER BY c.id ASC LIMIT ?`,
+    [...RECOVERABLE_NEXO_CALLBACK_REASONS, safeLimit]
+  );
+  return rows.map((row) => row.id);
+}
+
 export async function createFactoryCallback(data, db = pool) {
   const executor = getExecutor(db);
   const [result] = await executor.execute(

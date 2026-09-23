@@ -444,7 +444,10 @@ function isRetryableGraphqlFailure(result) {
     result?.errorType === 'network' ||
     result?.errorType === 'authentication' ||
     result?.httpStatus === 429 ||
-    Number(result?.httpStatus) >= 500
+    Number(result?.httpStatus) >= 500 ||
+    (Array.isArray(result?.errors) &&
+      result.errors.some((error) =>
+        (error?.code ?? error?.extensions?.code) === 'THROTTLED'))
   );
 }
 

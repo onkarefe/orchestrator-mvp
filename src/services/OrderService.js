@@ -95,6 +95,13 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
   const connection = await pool.getConnection();
   const logEvents = [];
   let transactionStarted = false;
+  let connectionReleased = false;
+  const releaseConnection = () => {
+    if (!connectionReleased) {
+      connection.release();
+      connectionReleased = true;
+    }
+  };
 
   try {
     await connection.beginTransaction();
@@ -112,6 +119,7 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
       );
       await connection.commit();
       transactionStarted = false;
+      releaseConnection();
 
       await logInfo({
         scopeType: 'order',
@@ -385,6 +393,7 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
 
     await connection.commit();
     transactionStarted = false;
+    releaseConnection();
     await writeInfoLogs(logEvents);
 
     return {
@@ -401,6 +410,8 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
       await connection.rollback();
       transactionStarted = false;
     }
+
+    releaseConnection();
 
     if (isDuplicateKeyError(error)) {
       const existingOrder = await findOrderByShopifyOrderId(shopifyOrderId);
@@ -444,7 +455,7 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
 
     throw error;
   } finally {
-    connection.release();
+    releaseConnection();
   }
 }
 

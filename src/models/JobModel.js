@@ -1,4 +1,5 @@
 import pool from '../db/connection.js';
+import { createArtifact } from './ArtifactModel.js';
 import { assertFlatSqlParams } from '../db/sqlParams.js';
 import { JOB_STATUSES } from '../constants/statuses.js';
 import { buildFactoryReference } from '../utils/factoryReference.js';
@@ -321,33 +322,51 @@ export async function claimNextPendingJob(options = {}) {
 
 export async function claimPendingJobById(id, options = {}) {
   const { workerId, maxAttempts } = normalizeClaimOptions(options);
-  const [result] = await pool.execute(
-    `UPDATE jobs
-    SET status = ?,
-      attempt_count = COALESCE(attempt_count, 0) + 1,
-      max_attempts = COALESCE(max_attempts, ?),
-      locked_at = CURRENT_TIMESTAMP,
-      locked_by = ?,
-      started_at = CURRENT_TIMESTAMP,
-      last_error = NULL
-    WHERE id = ?
-      AND status = ?
-      AND COALESCE(attempt_count, 0) < COALESCE(max_attempts, ?)`,
-    [
-      JOB_STATUSES.PROCESSING,
-      maxAttempts,
-      workerId,
-      id,
-      JOB_STATUSES.PENDING,
-      maxAttempts,
-    ]
-  );
+  const connection = await pool.getConnection();
+  let transactionStarted = false;
+  try {
+    await connection.beginTransaction();
+    transactionStarted = true;
+    const [result] = await connection.execute(
+      `UPDATE jobs
+      SET status = ?,
+        attempt_count = COALESCE(attempt_count, 0) + 1,
+        max_attempts = COALESCE(max_attempts, ?),
+        locked_at = CURRENT_TIMESTAMP,
+        locked_by = ?,
+        started_at = CURRENT_TIMESTAMP,
+        last_error = NULL
+      WHERE id = ?
+        AND status = ?
+        AND COALESCE(attempt_count, 0) < COALESCE(max_attempts, ?)`,
+      [
+        JOB_STATUSES.PROCESSING,
+        maxAttempts,
+        workerId,
+        id,
+        JOB_STATUSES.PENDING,
+        maxAttempts,
+      ]
+    );
 
-  if (result.affectedRows !== 1) {
-    return null;
+    if (result.affectedRows !== 1) {
+      await connection.commit();
+      transactionStarted = false;
+      return null;
+    }
+
+    const claimedJob = await findJobById(id, connection);
+    await connection.commit();
+    transactionStarted = false;
+    return claimedJob;
+  } catch (error) {
+    if (transactionStarted) {
+      await connection.rollback();
+    }
+    throw error;
+  } finally {
+    connection.release();
   }
-
-  return findJobById(id);
 }
 
 export async function updateJobStatus(id, status) {
@@ -380,65 +399,94 @@ export async function markJobProcessing(id) {
   return findJobById(id);
 }
 
-export async function markJobCompleted(id) {
-  await pool.execute(
-    `UPDATE jobs
-    SET status = ?,
-      locked_at = NULL,
-      locked_by = NULL,
-      completed_at = CURRENT_TIMESTAMP
-    WHERE id = ?`,
-    [JOB_STATUSES.COMPLETED, id]
-  );
+function claimLostError() {
+  const error = new Error('Render job claim is no longer owned');
+  error.code = 'JOB_CLAIM_LOST';
+  return error;
+}
 
-  return findJobById(id);
+function claimParams(claim) {
+  const attempt = Number(claim?.attempt_count);
+  if (!claim?.locked_by || !Number.isSafeInteger(attempt) || attempt <= 0) {
+    throw claimLostError();
+  }
+  // The attempt fences a re-claim even if the worker identity is reused.
+  return [JOB_STATUSES.PROCESSING, claim.locked_by, attempt];
+}
+
+async function mutateClaimedJob(id, assignments, values, claim, db) {
+  const executor = getExecutor(db);
+  const [result] = await executor.execute(
+    'UPDATE jobs SET ' + assignments +
+      ' WHERE id = ? AND status = ? AND locked_by = ? AND attempt_count = ?',
+    [...values, id, ...claimParams(claim)]
+  );
+  if (result.affectedRows !== 1) {
+    throw claimLostError();
+  }
+  return findJobById(id, executor);
+}
+
+export async function markJobCompleted(id, claim, db = pool) {
+  return mutateClaimedJob(id,
+    'status = ?, locked_at = NULL, locked_by = NULL, completed_at = CURRENT_TIMESTAMP',
+    [JOB_STATUSES.COMPLETED], claim, db);
 }
 
 export async function markJobCompletedWithArtifactManifest(
-  id,
-  artifactManifestPath
+  id, artifactManifestPath, claim, db = pool
 ) {
-  await pool.execute(
-    `UPDATE jobs
-    SET status = ?,
-      artifact_manifest_path = ?,
-      locked_at = NULL,
-      locked_by = NULL,
-      completed_at = CURRENT_TIMESTAMP
-    WHERE id = ?`,
-    [JOB_STATUSES.COMPLETED, artifactManifestPath, id]
-  );
-
-  return findJobById(id);
+  return mutateClaimedJob(id,
+    'status = ?, artifact_manifest_path = ?, locked_at = NULL, locked_by = NULL, completed_at = CURRENT_TIMESTAMP',
+    [JOB_STATUSES.COMPLETED, artifactManifestPath], claim, db);
 }
 
-export async function markJobFailed(id, errorMessage) {
-  await pool.execute(
-    `UPDATE jobs
-    SET status = ?,
-      last_error = ?,
-      locked_at = NULL,
-      locked_by = NULL,
-      completed_at = CURRENT_TIMESTAMP
-    WHERE id = ?`,
-    [JOB_STATUSES.FAILED, errorMessage, id]
-  );
-
-  return findJobById(id);
+export async function markJobFailed(id, errorMessage, claim, db = pool) {
+  return mutateClaimedJob(id,
+    'status = ?, last_error = ?, locked_at = NULL, locked_by = NULL, completed_at = CURRENT_TIMESTAMP',
+    [JOB_STATUSES.FAILED, errorMessage], claim, db);
 }
 
-export async function markJobPendingForRetry(id, errorMessage) {
-  await pool.execute(
-    `UPDATE jobs
-    SET status = ?,
-      last_error = ?,
-      locked_at = NULL,
-      locked_by = NULL
-    WHERE id = ?`,
-    [JOB_STATUSES.PENDING, errorMessage, id]
-  );
+export async function markJobPendingForRetry(id, errorMessage, claim, db = pool) {
+  return mutateClaimedJob(id,
+    'status = ?, last_error = ?, locked_at = NULL, locked_by = NULL',
+    [JOB_STATUSES.PENDING, errorMessage], claim, db);
+}
 
-  return findJobById(id);
+export async function publishCompletedJobArtifact(job, data, db = pool) {
+  const ownership = claimParams(job);
+  const connection = await db.getConnection();
+  let transactionStarted = false;
+  try {
+    await connection.beginTransaction();
+    transactionStarted = true;
+    const [rows] = await connection.execute(
+      'SELECT * FROM jobs WHERE id = ? AND status = ? AND locked_by = ? AND attempt_count = ? FOR UPDATE',
+      [job.id, ...ownership]
+    );
+    if (rows.length !== 1) {
+      throw claimLostError();
+    }
+    if (!data.manifestPath || String(data.orderId) !== String(rows[0].order_id)) {
+      throw new Error('Render artifact output identity is invalid');
+    }
+    const artifact = await createArtifact(
+      { ...data, jobId: job.id, orderId: rows[0].order_id }, connection
+    );
+    await markJobCompletedWithArtifactManifest(
+      job.id, data.manifestPath, job, connection
+    );
+    await connection.commit();
+    transactionStarted = false;
+    return artifact;
+  } catch (error) {
+    if (transactionStarted) {
+      await connection.rollback();
+    }
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 export async function incrementJobAttempt(id) {
@@ -527,6 +575,7 @@ export default {
   markJobProcessing,
   markJobCompleted,
   markJobCompletedWithArtifactManifest,
+  publishCompletedJobArtifact,
   markJobFailed,
   markJobPendingForRetry,
   incrementJobAttempt,

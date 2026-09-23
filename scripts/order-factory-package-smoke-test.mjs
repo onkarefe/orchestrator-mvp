@@ -163,6 +163,17 @@ try {
   });
   assert.equal(oneReady.ready, true);
   assert.equal(oneReady.positions.length, 1);
+  // A historical partial render is evidence, not the completed job's output.
+  const historicalArtifact = {
+    ...oneRender.artifact, id: 9999,
+    manifest_path: path.join(artifactsRoot, 'previous-attempt-manifest.json'),
+  };
+  const recoveredRender = await inspectOrderFactoryReadiness({
+    order: oneOrder, lineItems: [oneLine], jobs: [oneRender.job],
+    artifacts: [historicalArtifact, oneRender.artifact], artifactsRoot,
+  });
+  assert.equal(recoveredRender.ready, true);
+  assert.equal(recoveredRender.positions[0].artifactId, oneRender.artifact.id);
   const invalidQuantityReadiness = await inspectOrderFactoryReadiness({
     order: oneOrder,
     lineItems: [{ ...oneLine, quantity: 2 }],

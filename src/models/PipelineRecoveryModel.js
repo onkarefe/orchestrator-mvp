@@ -84,6 +84,7 @@ export async function listOrdersMissingFactoryPackage({
               WHERE a.job_id = j.id
                 AND a.order_id = o.id
                 AND a.type = 'zip'
+                AND BINARY a.manifest_path = BINARY j.artifact_manifest_path
                 AND a.status = 'available'
                 AND a.validation_status = 'passed'
             ) <> 1

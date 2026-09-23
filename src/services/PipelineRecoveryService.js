@@ -1,4 +1,6 @@
 import env from '../config/env.js';
+import { listRecoverableNexoCallbackIds } from '../models/FactoryCallbackModel.js';
+import { replayNexoCallback } from './NexoCallbackService.js';
 import {
   listOrdersMissingFactoryPackage,
   listOrdersWithPackageMissingFactoryTask,
@@ -249,6 +251,31 @@ export async function reconcileFactoryOrders({
   return summary;
 }
 
+export async function recoverNexoCallbacks({ config = env, runtime = {} } = {}) {
+  const listCandidates = runtime.listRecoverableNexoCallbackIds ?? listRecoverableNexoCallbackIds;
+  const replay = runtime.replayNexoCallback ?? replayNexoCallback;
+  const ids = await listCandidates({ limit: config.WORKER_RECOVERY_BATCH_SIZE });
+  const summary = { candidates: ids.length, recovered: 0, skipped: 0, failed: 0 };
+  for (const id of ids) {
+    try {
+      const result = await replay(id);
+      if (result.body?.processingStatus === 'processed' || result.body?.duplicate) {
+        summary.recovered += 1;
+      } else {
+        summary.skipped += 1;
+      }
+    } catch (error) {
+      summary.failed += 1;
+      await (runtime.logError ?? logError)({
+        scopeType: 'system', step: 'recovery.nexo_callback_failed',
+        message: 'NEXO callback recovery failed safely',
+        detailsJson: { callbackId: id, error: safeErrorForLog(error) },
+      });
+    }
+  }
+  return summary;
+}
+
 export async function runPipelineRecovery({
   config = env,
   runtime = {},
@@ -277,11 +304,15 @@ export async function runPipelineRecovery({
   const webhooks = await recoverWebhooks({ config, runtime });
   const factory = await reconcileOrders({ config, runtime });
 
-  return { staleJobs, webhooks, factory };
+  const nexoCallbacks = await (runtime.recoverNexoCallbacks ?? recoverNexoCallbacks)({
+    config, runtime,
+  });
+  return { staleJobs, webhooks, factory, nexoCallbacks };
 }
 
 export default {
   recoverShopifyWebhooks,
+  recoverNexoCallbacks,
   reconcileFactoryOrders,
   runPipelineRecovery,
 };
