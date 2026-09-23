@@ -4,7 +4,7 @@ import {
   LINE_ITEM_CLASSIFICATIONS,
   LINE_ITEM_ROUTING_STATES,
 } from '../constants/lineItemRouting.js';
-import { JOB_STATUSES } from '../constants/statuses.js';
+import { ORDER_STATUSES, JOB_STATUSES } from '../constants/statuses.js';
 
 function normalizeLimit(limit) {
   const parsed = Number(limit);
@@ -20,14 +20,19 @@ export async function listOrdersMissingFactoryPackage({
 } = {}) {
   const safeLimit = normalizeLimit(limit);
   const params = [
+    ORDER_STATUSES.MANUAL_REVIEW,
     LINE_ITEM_CLASSIFICATIONS.WALLPAPER,
+    LINE_ITEM_CLASSIFICATIONS.ACCESSORY,
     LINE_ITEM_ROUTING_STATES.PRODUCTION_READY,
+    LINE_ITEM_CLASSIFICATIONS.WALLPAPER,
+    LINE_ITEM_CLASSIFICATIONS.WALLPAPER,
     JOB_STATUSES.COMPLETED,
     safeLimit,
   ];
   const sql = `SELECT o.id AS order_id
     FROM orders o
     WHERE o.shopify_order_id IS NOT NULL
+      AND o.status <> ?
       AND JSON_LENGTH(o.raw_payload_json, '$.line_items') > 0
       AND NOT EXISTS (
         SELECT 1 FROM order_factory_packages p WHERE p.order_id = o.id
@@ -39,7 +44,14 @@ export async function listOrdersMissingFactoryPackage({
         SELECT 1
         FROM order_line_items li
         WHERE li.order_id = o.id
-          AND (li.classification <> ? OR li.routing_state <> ?)
+          AND (
+            li.classification IS NULL
+            OR li.classification NOT IN (?, ?)
+            OR li.routing_state IS NULL
+            OR li.routing_state <> ?
+            OR li.sku IS NULL OR TRIM(li.sku) = ''
+            OR li.quantity <= 0
+          )
       )
       AND (
         SELECT COUNT(*) FROM order_line_items li WHERE li.order_id = o.id
@@ -47,7 +59,18 @@ export async function listOrdersMissingFactoryPackage({
       AND (
         SELECT COUNT(*) FROM jobs j WHERE j.order_id = o.id
       ) = (
-        SELECT COUNT(*) FROM order_line_items li WHERE li.order_id = o.id
+        SELECT COUNT(*) FROM order_line_items li
+        WHERE li.order_id = o.id AND li.classification = ?
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM order_line_items li
+        WHERE li.order_id = o.id
+          AND (
+            SELECT COUNT(*) FROM jobs j
+            WHERE j.order_id = o.id
+              AND j.shopify_line_item_id = li.shopify_line_item_id
+              AND j.sku = li.sku
+          ) <> CASE WHEN li.classification = ? THEN 1 ELSE 0 END
       )
       AND NOT EXISTS (
         SELECT 1

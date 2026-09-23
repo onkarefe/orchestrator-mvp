@@ -12,7 +12,10 @@ import {
   createOrderLineItem,
   listOrderLineItemsByOrderId,
 } from '../models/OrderLineItemModel.js';
-import { LINE_ITEM_CLASSIFICATIONS } from '../constants/lineItemRouting.js';
+import {
+  LINE_ITEM_CLASSIFICATIONS,
+  LINE_ITEM_ROUTING_STATES,
+} from '../constants/lineItemRouting.js';
 import { createConfiguratorJobFromLineItem } from './JobService.js';
 import { classifyShopifyLineItem } from './LineItemRoutingService.js';
 import {
@@ -205,6 +208,9 @@ export async function createOrderAndJobsFromShopifyPayload(payload) {
       );
 
       lineItemRecords.push(persisted.lineItem);
+      if (routing.routingState === LINE_ITEM_ROUTING_STATES.FACTORY_BLOCKED) {
+        manualReviewReasons.add(routing.routingReason);
+      }
       logEvents.push({
         scopeType: 'order',
         orderId: order.id,

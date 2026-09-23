@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { artifactsDir } from '../config/paths.js';
 import { JOB_STATUSES } from '../constants/statuses.js';
+import { LINE_ITEM_CLASSIFICATIONS } from '../constants/lineItemRouting.js';
 import { calculateFileSha256 } from './artifactManifest.js';
 import {
   buildOrderFactoryIdentity,
@@ -194,6 +195,35 @@ export async function inspectOrderFactoryReadiness({
       (job) => normalizeIdentity(job.shopify_line_item_id) === lineItemId
     );
 
+    if (lineItem.classification === LINE_ITEM_CLASSIFICATIONS.ACCESSORY) {
+      if (matchingJobs.length !== 0) {
+        return blocked('accessory_render_job_unexpected', {
+          shopifyLineItemId: lineItemId,
+          jobCount: matchingJobs.length,
+        });
+      }
+
+      const sku = String(lineItem.sku ?? '').trim();
+      const quantity = Number(lineItem.quantity);
+      if (!lineItemId || !sku || !Number.isSafeInteger(quantity) || quantity <= 0) {
+        return blocked('accessory_line_item_invalid', {
+          shopifyLineItemId: lineItemId,
+        });
+      }
+
+      for (let unit = 0; unit < quantity; unit += 1) {
+        positions.push({
+          classification: LINE_ITEM_CLASSIFICATIONS.ACCESSORY,
+          sourcePosition: Number(lineItem.source_position),
+          shopifyLineItemId: lineItemId,
+          sku,
+          quantity: 1,
+          panelFiles: [],
+        });
+      }
+      continue;
+    }
+
     if (!lineItemId || matchingJobs.length !== 1) {
       return blocked('wallpaper_job_cardinality_invalid', {
         shopifyLineItemId: lineItemId,
@@ -269,9 +299,12 @@ export async function inspectOrderFactoryReadiness({
     }
   }
 
-  if (safeJobs.length !== lineItems.length) {
+  const wallpaperCount = lineItems.filter(
+    (lineItem) => lineItem.classification === LINE_ITEM_CLASSIFICATIONS.WALLPAPER
+  ).length;
+  if (safeJobs.length !== wallpaperCount) {
     return blocked('order_wallpaper_job_count_mismatch', {
-      expected: lineItems.length,
+      expected: wallpaperCount,
       actual: safeJobs.length,
     });
   }
@@ -418,6 +451,7 @@ async function reconcileExistingPackageDirectory({
     order,
     shopifyOrderId: order.shopify_order_id,
     positions: positions.map((position) => ({
+      classification: position.classification,
       sku: position.sku,
       quantity: position.quantity,
       panelFiles: position.panelFiles,
@@ -537,6 +571,7 @@ export async function assembleOrderFactoryPackage({
       order,
       shopifyOrderId: order.shopify_order_id,
       positions: positions.map((position) => ({
+        classification: position.classification,
         sku: position.sku,
         quantity: position.quantity,
         panelFiles: position.panelFiles,

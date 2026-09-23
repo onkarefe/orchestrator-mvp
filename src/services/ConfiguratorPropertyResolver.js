@@ -26,6 +26,16 @@ function resolvePropertyValue(properties, privateName, legacyName) {
 
 export function resolveConfiguratorProperties(properties) {
   return {
+    // An empty or malformed private value still marks a configurator line.
+    hasMarker: (Array.isArray(properties) ? properties : []).some(
+      (property) =>
+        [
+          PRIVATE_CONFIGURATOR_PAYLOAD_PROPERTY,
+          LEGACY_CONFIGURATOR_PAYLOAD_PROPERTY,
+          PRIVATE_CONFIGURATOR_INSTANCE_PROPERTY,
+          LEGACY_CONFIGURATOR_INSTANCE_PROPERTY,
+        ].includes(property?.name)
+    ),
     payload: resolvePropertyValue(
       properties,
       PRIVATE_CONFIGURATOR_PAYLOAD_PROPERTY,

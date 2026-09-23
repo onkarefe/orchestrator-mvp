@@ -110,17 +110,26 @@ await listOrdersMissingFactoryPackage({
   },
 });
 assert.match(missingPackageSql, /NOT EXISTS \(\s*SELECT 1 FROM order_factory_packages/);
-assert.match(missingPackageSql, /li\.classification <> \?/);
+assert.match(missingPackageSql, /li\.classification NOT IN \(\?, \?\)/);
 assert.match(missingPackageSql, /li\.routing_state <> \?/);
 assert.match(missingPackageSql, /j\.status <> \?/);
 assert.match(missingPackageSql, /a\.validation_status = 'passed'/);
 assert.deepEqual(missingPackageParams, [
+  'manual_review',
   'WALLPAPER',
+  'ACCESSORY',
   'production_ready',
+  'WALLPAPER',
+  'WALLPAPER',
   'completed',
   10,
 ]);
 
+assert.match(missingPackageSql, /li\.order_id = o\.id AND li\.classification = \?/);
+assert.match(missingPackageSql, /CASE WHEN li\.classification = \? THEN 1 ELSE 0 END/);
+assert.match(missingPackageSql, /j\.shopify_line_item_id = li\.shopify_line_item_id/);
+assert.match(missingPackageSql, /j\.sku = li\.sku/);
+assert.match(missingPackageSql, /o\.status <> \?/);
 let missingTaskSql = null;
 await listOrdersWithPackageMissingFactoryTask({
   limit: 10,
@@ -158,7 +167,7 @@ function reconciliationHarness() {
     try {
       const order = orders.get(orderId);
 
-      if (order.kind !== 'valid') {
+      if (!['valid', 'ACCESSORY'].includes(order.kind)) {
         return {
           disposition: 'not_ready',
           reason:
@@ -216,11 +225,11 @@ const firstPass = await reconcileFactoryOrders({
   config,
   runtime: firstHarness.runtime,
 });
-assert.equal(firstPass.packagesReconciled, 1);
-assert.equal(firstPass.tasksReconciled, 2);
-assert.equal(firstPass.skipped, 3);
-assert.deepEqual(firstHarness.counts, { packages: 1, tasks: 2 });
-assert.equal(firstHarness.orders.get(103).package, false);
+assert.equal(firstPass.packagesReconciled, 2);
+assert.equal(firstPass.tasksReconciled, 3);
+assert.equal(firstPass.skipped, 2);
+assert.deepEqual(firstHarness.counts, { packages: 2, tasks: 3 });
+assert.equal(firstHarness.orders.get(103).package, true);
 assert.equal(firstHarness.orders.get(104).package, false);
 assert.equal(firstHarness.orders.get(105).package, false);
 
@@ -230,7 +239,7 @@ const repeatedPass = await reconcileFactoryOrders({
 });
 assert.equal(repeatedPass.packagesReconciled, 0);
 assert.equal(repeatedPass.tasksReconciled, 0);
-assert.deepEqual(firstHarness.counts, { packages: 1, tasks: 2 });
+assert.deepEqual(firstHarness.counts, { packages: 2, tasks: 3 });
 
 const raceHarness = reconciliationHarness();
 const raceResults = await Promise.all([
@@ -242,13 +251,13 @@ assert.equal(
     (total, result) => total + result.packagesReconciled,
     0
   ),
-  1
+  2
 );
 assert.equal(
   raceResults.reduce((total, result) => total + result.tasksReconciled, 0),
-  2
+  3
 );
-assert.deepEqual(raceHarness.counts, { packages: 1, tasks: 2 });
+assert.deepEqual(raceHarness.counts, { packages: 2, tasks: 3 });
 
 const recoveryLogs = [];
 const recoveryResult = await runPipelineRecovery({

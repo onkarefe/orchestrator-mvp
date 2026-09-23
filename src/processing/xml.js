@@ -1,3 +1,4 @@
+import { LINE_ITEM_CLASSIFICATIONS } from '../constants/lineItemRouting.js';
 import { buildOrderFactoryIdentity } from './factoryFileNames.js';
 import { validateShopifyShippingAddress } from '../services/PreflightValidationService.js';
 
@@ -120,12 +121,33 @@ function getGeneratedPanels(panelFiles) {
 
 function buildPositionXml(position, index) {
   const sku = normalizeText(position?.sku);
-  const panels = getGeneratedPanels(position?.panelFiles);
-
   if (!sku) {
-    throw new Error(`Wallpaper position ${index + 1} requires a non-empty SKU`);
+    throw new Error(`Factory position ${index + 1} requires a non-empty SKU`);
   }
 
+  if (position?.classification === LINE_ITEM_CLASSIFICATIONS.ACCESSORY) {
+    const quantity = position.quantity ?? 1;
+    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+      throw new Error('Accessory quantity must be a positive integer');
+    }
+    if (
+      position.panelFiles !== undefined &&
+      (!Array.isArray(position.panelFiles) || position.panelFiles.length !== 0)
+    ) {
+      throw new Error('Accessory positions must not contain panel files');
+    }
+    return Array.from({ length: quantity }, () => `    <position>
+      <sku>${xmlEscape(sku)}</sku>
+    </position>`).join('\n');
+  }
+
+  if (
+    position?.classification &&
+    position.classification !== LINE_ITEM_CLASSIFICATIONS.WALLPAPER
+  ) {
+    throw new Error('Unknown factory position classification');
+  }
+  const panels = getGeneratedPanels(position?.panelFiles);
   const firstPanel = panels[0];
   const fileItems = panels
     .map(
@@ -154,7 +176,7 @@ export function buildOrderXml({ order, shopifyOrderId, positions }) {
   }
 
   if (!Array.isArray(positions) || positions.length === 0) {
-    throw new Error('At least one wallpaper position is required for NEXO XML');
+    throw new Error('At least one factory position is required for NEXO XML');
   }
 
   const positionFileNames = positions.flatMap((position) =>

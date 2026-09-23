@@ -10,8 +10,9 @@ export const LINE_ITEM_ROUTING_STATES = Object.freeze({
 });
 
 export const LINE_ITEM_ROUTING_REASONS = Object.freeze({
-  ACCESSORY_XML_UNRESOLVED: 'accessory_xml_contract_unresolved',
-  UNKNOWN_SKU: 'unknown_sku',
+  MISSING_SKU: 'missing_sku',
+  CONFIGURATOR_SKU_MISMATCH: 'configurator_sku_mismatch',
+  INVALID_ACCESSORY_QUANTITY: 'invalid_accessory_quantity',
 });
 
 export default {

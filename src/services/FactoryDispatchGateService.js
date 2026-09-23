@@ -7,11 +7,11 @@ import {
   MANUAL_REVIEW_REASONS,
   validateShopifyShippingAddress,
 } from './PreflightValidationService.js';
+import { classifyShopifyLineItem } from './LineItemRoutingService.js';
 
 export const FACTORY_DISPATCH_BLOCK_REASONS = Object.freeze({
   CLASSIFICATION_INCOMPLETE: 'line_item_classification_incomplete',
   UNKNOWN_LINE_ITEM: 'order_contains_unknown_line_item',
-  ACCESSORY_LINE_ITEM: 'order_contains_accessory_line_item',
   BLOCKED_LINE_ITEM: 'order_contains_blocked_line_item',
   ORDER_MANUAL_REVIEW: 'order_requires_manual_review',
   MISSING_SHIPPING_ADDRESS:
@@ -81,6 +81,23 @@ export function evaluateFactoryDispatchGate({ order, lineItems } = {}) {
         reason: FACTORY_DISPATCH_BLOCK_REASONS.CLASSIFICATION_INCOMPLETE,
       };
     }
+    if (persistedLineItem.classification === LINE_ITEM_CLASSIFICATIONS.ACCESSORY) {
+      const routing = classifyShopifyLineItem(sourceLineItem, {
+        validationOptions: { checkMasterFileExists: false },
+      });
+      if (
+        routing.classification !== LINE_ITEM_CLASSIFICATIONS.ACCESSORY ||
+        routing.routingState !== LINE_ITEM_ROUTING_STATES.PRODUCTION_READY ||
+        normalizedIdentity(persistedLineItem.sku) !==
+          normalizedIdentity(sourceLineItem?.sku) ||
+        Number(persistedLineItem.quantity) !== sourceLineItem?.quantity
+      ) {
+        return {
+          allowed: false,
+          reason: FACTORY_DISPATCH_BLOCK_REASONS.BLOCKED_LINE_ITEM,
+        };
+      }
+    }
   }
 
   if (
@@ -98,19 +115,10 @@ export function evaluateFactoryDispatchGate({ order, lineItems } = {}) {
   if (
     lineItems.some(
       (lineItem) =>
-        lineItem.classification === LINE_ITEM_CLASSIFICATIONS.ACCESSORY
-    )
-  ) {
-    return {
-      allowed: false,
-      reason: FACTORY_DISPATCH_BLOCK_REASONS.ACCESSORY_LINE_ITEM,
-    };
-  }
-
-  if (
-    lineItems.some(
-      (lineItem) =>
-        lineItem.classification !== LINE_ITEM_CLASSIFICATIONS.WALLPAPER ||
+        ![
+          LINE_ITEM_CLASSIFICATIONS.WALLPAPER,
+          LINE_ITEM_CLASSIFICATIONS.ACCESSORY,
+        ].includes(lineItem.classification) ||
         lineItem.routing_state !== LINE_ITEM_ROUTING_STATES.PRODUCTION_READY
     )
   ) {

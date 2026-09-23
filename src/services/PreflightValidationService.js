@@ -135,7 +135,7 @@ export function isWallpaperSku(
 
   return (Array.isArray(wallpaperSkus) ? wallpaperSkus : []).some(
     (configuredSku) =>
-      typeof configuredSku === 'string' && configuredSku.trim() === sku
+      typeof configuredSku === 'string' && configuredSku.trim() === sku.trim()
   );
 }
 

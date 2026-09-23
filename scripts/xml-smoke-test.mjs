@@ -315,4 +315,38 @@ assert.match(
 );
 assert.equal(quantityChangedXml, quantityOneXml);
 
+const addon = { classification: 'ACCESSORY', sku: '283-391.0', quantity: 3 };
+const accessoryXml = buildOrderXml({
+  order, shopifyOrderId: '7217548394776', positions: [addon],
+});
+assert.equal((accessoryXml.match(/<position>/g) ?? []).length, 3);
+for (const [, body] of accessoryXml.matchAll(/<position>([\s\S]*?)<\/position>/g)) {
+  assert.equal(body.trim(), '<sku>283-391.0</sku>');
+}
+assert.ok(!/<(?:quantity|width|height|variants|copies_per_variant|files)\b/.test(accessoryXml));
+assert.throws(() => buildOrderXml({
+  order, shopifyOrderId: '7217548394776', positions: [],
+}), /At least one factory position/);
+for (const quantity of [0, -1, 1.5, '3']) {
+  assert.throws(() => buildOrderXml({
+    order, shopifyOrderId: '7217548394776', positions: [{ ...addon, quantity }],
+  }), /positive integer/);
+}
+const wallpaperPosition = {
+  sku: '20-140.1-3',
+  panelFiles: buildPanelFiles({
+    shopifyOrderId: '7217548394776', panelCount: 1, panelWidthMm: 600, heightMm: 2500,
+  }),
+};
+assert.throws(() => buildOrderXml({
+  order, shopifyOrderId: '7217548394776',
+  positions: [wallpaperPosition, addon, wallpaperPosition],
+}), /unique across positions/);
+assert.throws(() => buildOrderXml({
+  order, shopifyOrderId: '7217548394776',
+  positions: [{ ...addon, panelFiles: wallpaperPosition.panelFiles }],
+}), /must not contain panel files/);
+assert.throws(() => buildOrderXml({
+  order, shopifyOrderId: '7217548394776', positions: [{ sku: '20-140.1-3' }],
+}), /Generated panel PDFs are required/);
 console.log('xml smoke ok:', cases);

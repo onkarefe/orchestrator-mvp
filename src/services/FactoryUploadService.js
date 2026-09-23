@@ -192,7 +192,17 @@ export function extractPdfFileNamesFromXml(xml) {
     fileNames.push(fileName);
   }
 
-  if (fileNames.length === 0) {
+  // Zero PDFs are valid only for an explicitly SKU-only accessory order.
+  const positionsBody = String(xml ?? '').match(
+    /<positions>([\s\S]*?)<\/positions>/
+  )?.[1];
+  const skuOnlyPattern = /<position>\s*<sku>([^<]+)<\/sku>\s*<\/position>/g;
+  const accessoryPositions = [...(positionsBody ?? '').matchAll(skuOnlyPattern)];
+  const accessoryOnly =
+    accessoryPositions.length > 0 &&
+    positionsBody.replace(skuOnlyPattern, '').trim() === '' &&
+    accessoryPositions.every(([, sku]) => decodeXmlText(sku).trim().length > 0);
+  if (fileNames.length === 0 && !accessoryOnly) {
     throw new FactoryUploadSafetyError(
       'xml_pdf_references_missing',
       'Production XML does not reference any FTP PDF files'

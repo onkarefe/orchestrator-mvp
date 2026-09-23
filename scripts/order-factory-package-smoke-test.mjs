@@ -12,7 +12,9 @@ import {
   inspectOrderFactoryReadiness,
 } from '../src/processing/OrderFactoryPackageAssembler.js';
 import { buildWallpaperPanelFileName } from '../src/processing/factoryFileNames.js';
-import { resolveFactoryUploadFiles } from '../src/services/FactoryUploadService.js';
+import { buildWallpaperRenderPlan } from '../src/processing/panels.js';
+import { reconcileFactoryOrders } from '../src/services/PipelineRecoveryService.js';
+import { extractPdfFileNamesFromXml, resolveFactoryUploadFiles } from '../src/services/FactoryUploadService.js';
 import { ensureOrderFactoryPackage } from '../src/services/OrderFactoryPackageService.js';
 import { ensureOrderFactoryUploadTask } from '../src/services/FactoryUploadTaskService.js';
 
@@ -58,13 +60,13 @@ function persistedLine(order, source, sourcePosition, classification = 'WALLPAPE
     quantity: source.quantity,
     classification,
     routing_state:
-      classification === LINE_ITEM_CLASSIFICATIONS.WALLPAPER
+      ['WALLPAPER', 'ACCESSORY'].includes(classification)
         ? LINE_ITEM_ROUTING_STATES.PRODUCTION_READY
         : LINE_ITEM_ROUTING_STATES.FACTORY_BLOCKED,
   };
 }
 
-async function renderFixture({ order, lineItem, jobId, status = 'completed' }) {
+async function renderFixture({ order, lineItem, jobId, status = 'completed', plan }) {
   const renderDir = path.join(
     artifactsRoot,
     'orders',
@@ -75,9 +77,20 @@ async function renderFixture({ order, lineItem, jobId, status = 'completed' }) {
     'run-1'
   );
   await fs.mkdir(renderDir, { recursive: true });
-  const sourcePdfName = `legacy-render-${jobId}-01.pdf`;
-  const sourcePdfPath = path.join(renderDir, sourcePdfName);
-  await fs.writeFile(sourcePdfPath, `%PDF test job ${jobId}`, 'utf8');
+
+  const panels = [];
+  const files = [];
+  for (let index = 0; index < (plan?.segments.length ?? 1); index += 1) {
+    const name = 'legacy-render-' + jobId + '-' + index + '.pdf';
+    const sourcePath = path.join(renderDir, name);
+    await fs.writeFile(sourcePath, '%PDF test job ' + jobId, 'utf8');
+    panels.push({
+      file_name: name,
+      width_mm: plan?.segments[index].pageWidthMm ?? 625,
+      height_mm: plan?.segments[index].pageHeightMm ?? 2400,
+    });
+    files.push({ name, source_path: sourcePath });
+  }
   const manifestPath = path.join(
     artifactsRoot,
     'orders',
@@ -96,11 +109,9 @@ async function renderFixture({ order, lineItem, jobId, status = 'completed' }) {
         shopify_line_item_id: lineItem.shopify_line_item_id,
       },
       contents: {
-        panel_count: 1,
-        panels: [
-          { file_name: sourcePdfName, width_mm: 625, height_mm: 2400 },
-        ],
-        files: [{ name: sourcePdfName, source_path: sourcePdfPath }],
+        panel_count: panels.length,
+        panels,
+        files,
       },
       validation: { ok: true, validationStatus: 'passed' },
     })}\n`,
@@ -399,6 +410,168 @@ try {
       artifactsRoot,
     });
     assert.equal(blocked.ready, false);
+  }
+
+  const addonCases = [
+    { id: 10, sources: [
+      sourceItem(1001, '20-140.1-3'), sourceItem(1002, '283-391.0'),
+      sourceItem(1003, '283-394.0'),
+    ], wallpaper: [0], pdfs: 5, positions: 3 },
+    { id: 11, sources: [
+      sourceItem(1101, '283-391.0', 3),
+    ], wallpaper: [], pdfs: 0, positions: 3 },
+    { id: 12, sources: [
+      sourceItem(1201, '283-391.0', 2), sourceItem(1202, '283-388.0'),
+    ], wallpaper: [], pdfs: 0, positions: 3 },
+    { id: 13, sources: [
+      sourceItem(1301, '283-391.0', 2), sourceItem(1302, '20-140.1-3'),
+      sourceItem(1303, '283-394.0'), sourceItem(1304, '20-331.1-3'),
+    ], wallpaper: [1, 3], pdfs: 6, positions: 5 },
+    { id: 14, sources: [
+      sourceItem(1401, '20-331.1-3'), sourceItem(1402, '283-391.0'),
+    ], wallpaper: [0], pdfs: 1, positions: 2 },
+  ];
+  for (const fixture of addonCases) {
+    const order = orderFixture(fixture.id, fixture.sources);
+    order.status = 'received';
+    const lines = fixture.sources.map((source, index) => persistedLine(
+      order, source, index, fixture.wallpaper.includes(index) ? 'WALLPAPER' : 'ACCESSORY'
+    ));
+    const renders = await Promise.all(fixture.wallpaper.map((index) => renderFixture({
+      order, lineItem: lines[index], jobId: fixture.id * 100 + index,
+      plan: buildWallpaperRenderPlan({
+        sku: lines[index].sku, outputWidthMm: 3000, outputHeightMm: 2500,
+        crop: { left: 0, top: 0, width: 1000, height: 800 },
+      }),
+    })));
+    const input = {
+      order, lineItems: [...lines].reverse(),
+      jobs: renders.map((render) => render.job),
+      artifacts: renders.map((render) => render.artifact), artifactsRoot,
+    };
+    const ready = await inspectOrderFactoryReadiness(input);
+    assert.equal(ready.ready, true, ready.reason);
+    assert.equal(input.jobs.length, fixture.wallpaper.length);
+    assert.equal(ready.positions.length, fixture.positions);
+    assert.deepEqual(ready.positions.map((position) => position.sku),
+      lines.flatMap((line) => Array(line.quantity).fill(line.sku)));
+    for (const position of ready.positions.filter((p) => p.classification === 'ACCESSORY')) {
+      assert.deepEqual(position.panelFiles, []);
+      assert.equal(position.jobId, undefined);
+      assert.equal(position.artifactId, undefined);
+      assert.equal(position.quantity, 1);
+    }
+    const assembly = await assembleOrderFactoryPackage({
+      order, positions: ready.positions, artifactsRoot,
+    });
+    const xml = await fs.readFile(assembly.xmlPath, 'utf8');
+    const xmlPositions = [...xml.matchAll(/<position>([\s\S]*?)<\/position>/g)];
+    assert.equal(xmlPositions.length, fixture.positions);
+    assert.equal(assembly.fileCount, fixture.pdfs + 1);
+    assert.equal(assembly.manifest.contents.position_count, fixture.positions);
+    assert.equal(assembly.manifest.contents.pdf_count, fixture.pdfs);
+    assert.equal(xmlReferences(xml).length, fixture.pdfs);
+    for (const [index, position] of ready.positions.entries()) {
+      if (position.classification === 'ACCESSORY') {
+        assert.equal(xmlPositions[index][1].trim(), '<sku>' + position.sku + '</sku>');
+      }
+    }
+    const files = await resolveFactoryUploadFiles({
+      artifact: { manifest_path: assembly.manifestPath, checksum: assembly.xmlChecksum },
+      orderPackage: { content_checksum: assembly.contentChecksum }, artifactsRoot,
+    });
+    assert.equal(files.pdfFiles.length, fixture.pdfs);
+    assert.equal(files.xmlFile.fileName, assembly.xmlFileName);
+    assert.equal((await assembleOrderFactoryPackage({
+      order, positions: ready.positions, artifactsRoot,
+    })).recoveredExisting, true);
+
+    const accessoryLine = lines.find((line) => line.classification === 'ACCESSORY');
+    assert.equal((await inspectOrderFactoryReadiness({
+      ...input, jobs: [...input.jobs, {
+        id: 99999, shopify_line_item_id: accessoryLine.shopify_line_item_id,
+        sku: accessoryLine.sku, status: 'completed',
+      }],
+    })).reason, 'accessory_render_job_unexpected');
+    assert.equal((await inspectOrderFactoryReadiness({
+      ...input, jobs: [...input.jobs, { id: 99998, shopify_line_item_id: 'unmatched' }],
+    })).reason, 'order_wallpaper_job_count_mismatch');
+    assert.equal((await inspectOrderFactoryReadiness({
+      ...input, lineItems: lines.map((line) => ({
+        ...line, routing_state: 'factory_blocked',
+      })),
+    })).ready, false);
+    if (renders.length) {
+      assert.equal((await inspectOrderFactoryReadiness({
+        ...input, jobs: input.jobs.slice(1),
+      })).ready, false);
+      assert.equal((await inspectOrderFactoryReadiness({
+        ...input, jobs: input.jobs.map((job) => ({ ...job, status: 'pending' })),
+      })).ready, false);
+      assert.equal((await inspectOrderFactoryReadiness({
+        ...input, artifacts: [],
+      })).ready, false);
+    }
+
+    // Exercise actual readiness, assembly, and task creation through recovery.
+    // Persistence is stubbed; no DB or FTP connection is made.
+    const state = { artifact: null, package: null, task: null };
+    const runtime = {
+      getConnection: async () => ({
+        async beginTransaction() {}, async commit() {}, async rollback() {}, release() {},
+      }),
+      findOrderByIdForUpdate: async () => order,
+      listOrderLineItemsByOrderId: async () => lines,
+      listJobsByOrderId: async () => input.jobs,
+      listArtifactsByOrderId: async () => input.artifacts,
+      findOrderFactoryPackageByOrderId: async () => state.package,
+      findArtifactById: async () => state.artifact,
+      inspectOrderFactoryReadiness: (data) => inspectOrderFactoryReadiness({ ...data, artifactsRoot }),
+      assembleOrderFactoryPackage: (data) => assembleOrderFactoryPackage({ ...data, artifactsRoot }),
+      createArtifact: async (data) => (state.artifact = {
+        id: 5000 + fixture.id, order_id: data.orderId, job_id: data.jobId,
+        type: data.type, status: data.status, validation_status: data.validationStatus,
+        manifest_path: data.manifestPath, file_name: data.fileName,
+      }),
+      createOrderFactoryPackage: async (data) => (state.package = {
+        id: 6000 + fixture.id, order_id: data.orderId, artifact_id: data.artifactId,
+        order_number: data.orderNumber, status: data.status,
+        manifest_path: data.manifestPath, xml_file_name: data.xmlFileName,
+      }),
+      findFactoryUploadTaskByOrderPackageId: async () => state.task,
+      createFactoryUploadTask: async (data) => (state.task = {
+        id: 7000 + fixture.id, order_id: data.orderId, job_id: data.jobId,
+        artifact_id: data.artifactId, order_factory_package_id: data.orderFactoryPackageId,
+        shopify_order_id: data.shopifyOrderId, factory_reference: data.factoryReference,
+        upload_mode: data.uploadMode, status: data.status,
+      }),
+      logInfo: async () => {}, logWarning: async () => {},
+    };
+    const config = { FTP_REMOTE_DIR: '/factory', FTP_UPLOAD_TASK_MAX_ATTEMPTS: 3 };
+    const recoveryRuntime = {
+      listOrdersMissingFactoryPackage: async () => [order.id],
+      listOrdersWithPackageMissingFactoryTask: async () => [],
+      ensureOrderFactoryPackage: ({ orderId }) => ensureOrderFactoryPackage({ orderId, config, runtime }),
+      logInfo: async () => {}, logWarning: async () => {},
+      logError: async (entry) => assert.fail(JSON.stringify(entry)),
+    };
+    const recovery = await reconcileFactoryOrders({ config, runtime: recoveryRuntime });
+    assert.equal(recovery.packagesReconciled, 1);
+    assert.equal(recovery.tasksReconciled, 1);
+    assert.equal(state.task.status, 'pending');
+    assert.equal(state.task.job_id, null);
+    const repeatedRecovery = await reconcileFactoryOrders({ config, runtime: recoveryRuntime });
+    assert.equal(repeatedRecovery.packagesReconciled, 0);
+    assert.equal(repeatedRecovery.tasksReconciled, 0);
+  }
+  for (const xml of [
+    '<positions></positions>',
+    '<positions><position><sku>283-391.0</sku></position><position/></positions>',
+    '<positions><position><sku>283-391.0</sku></position><files/></positions>',
+    '<positions><position><sku>wallpaper</sku><width>600</width></position></positions>',
+    '<positions><position><sku> </sku></position></positions>',
+  ]) {
+    assert.throws(() => extractPdfFileNamesFromXml(xml), /does not reference any FTP PDF/);
   }
 
   let lockTail = Promise.resolve();

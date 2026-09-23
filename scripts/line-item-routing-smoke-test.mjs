@@ -12,7 +12,7 @@ import {
 import { ensureOrderFactoryUploadTask } from '../src/services/FactoryUploadTaskService.js';
 import { createConfiguratorJobFromLineItem } from '../src/services/JobService.js';
 import { classifyShopifyLineItem } from '../src/services/LineItemRoutingService.js';
-import { MANUAL_REVIEW_REASONS } from '../src/services/PreflightValidationService.js';
+import { MANUAL_REVIEW_REASONS, validateConfiguratorLineItem } from '../src/services/PreflightValidationService.js';
 import {
   LEGACY_CONFIGURATOR_INSTANCE_PROPERTY,
   LEGACY_CONFIGURATOR_PAYLOAD_PROPERTY,
@@ -41,7 +41,6 @@ function configurableItem(id, sku = '20-140.1-3', payload = validPayload) {
 
 const routingOptions = {
   wallpaperSkus: ['20-140.1-3', '20-140.1-4', '20-331.1-3'],
-  accessorySkus: ['ACCESSORY-EXPLICIT'],
   validationOptions: { checkMasterFileExists: false },
 };
 
@@ -72,6 +71,16 @@ assert.equal(
   }).classification,
   LINE_ITEM_CLASSIFICATIONS.UNKNOWN
 );
+
+// Routing and job preflight must use the same exact, trimmed SKU cross-check.
+const spacedWallpaper = { ...validWallpaper, sku: ' 20-140.1-3 ' };
+assert.equal(classifyShopifyLineItem(spacedWallpaper, routingOptions).routingState,
+  LINE_ITEM_ROUTING_STATES.PRODUCTION_READY);
+assert.equal(validateConfiguratorLineItem(spacedWallpaper, {
+  wallpaperSkus: routingOptions.wallpaperSkus, checkMasterFileExists: false,
+}).isConfigurable, true);
+assert.equal(classifyShopifyLineItem(item(999, ' 20-140.1-3 '), routingOptions).routingState,
+  LINE_ITEM_ROUTING_STATES.FACTORY_BLOCKED);
 
 const privatePayloadValue = JSON.stringify({
   ...validPayload,
@@ -185,6 +194,7 @@ assert.equal(
   'new-instance'
 );
 assert.deepEqual(resolveConfiguratorProperties([]), {
+  hasMarker: false,
   payload: null,
   instanceId: null,
 });
@@ -258,19 +268,8 @@ assert.equal(
   invalidWallpaperRouting.routingState,
   LINE_ITEM_ROUTING_STATES.FACTORY_BLOCKED
 );
-const overlappingContractRouting = classifyShopifyLineItem(
-  missingConfiguratorWallpaper,
-  {
-    ...routingOptions,
-    accessorySkus: [missingConfiguratorWallpaper.sku],
-  }
-);
-assert.equal(
-  overlappingContractRouting.classification,
-  LINE_ITEM_CLASSIFICATIONS.WALLPAPER
-);
 
-const accessory = item(103, 'ACCESSORY-EXPLICIT');
+const accessory = item(103, '283-391.0');
 const accessoryRouting = classifyShopifyLineItem(accessory, routingOptions);
 assert.equal(
   accessoryRouting.classification,
@@ -278,7 +277,7 @@ assert.equal(
 );
 assert.equal(
   accessoryRouting.routingState,
-  LINE_ITEM_ROUTING_STATES.FACTORY_BLOCKED
+  LINE_ITEM_ROUTING_STATES.PRODUCTION_READY
 );
 
 const untrustedPayloadItem = configurableItem(104, 'UNTRUSTED-SKU');
@@ -301,7 +300,7 @@ assert.equal(
   missingSkuRouting.classification,
   LINE_ITEM_CLASSIFICATIONS.UNKNOWN
 );
-assert.equal(missingSkuRouting.routingReason, 'unknown_sku');
+assert.equal(missingSkuRouting.routingReason, 'missing_sku');
 
 const prefixLikeRouting = classifyShopifyLineItem(
   configurableItem(105, '20-140.1-3-extra'),
@@ -516,6 +515,8 @@ function persistedLine(sourceItem, sourcePosition, routing) {
     shopify_order_id: '9001',
     shopify_line_item_id: String(sourceItem.id),
     source_position: sourcePosition,
+    sku: sourceItem.sku,
+    quantity: sourceItem.quantity,
     classification: routing.classification,
     routing_state: routing.routingState,
     routing_reason: routing.routingReason,
@@ -609,6 +610,14 @@ assert.equal(createdTaskCount, 1);
 
 const blockedCases = [
   {
+    order: orderFor(malformedPrivatePayload, accessory),
+    lines: [
+      persistedLine(malformedPrivatePayload, 0, malformedPrivateRouting),
+      persistedLine(accessory, 1, accessoryRouting),
+    ],
+    reason: FACTORY_DISPATCH_BLOCK_REASONS.BLOCKED_LINE_ITEM,
+  },
+  {
     order: orderFor(missingConfiguratorWallpaper),
     lines: [
       persistedLine(missingConfiguratorWallpaper, 0, invalidWallpaperRouting),
@@ -616,22 +625,9 @@ const blockedCases = [
     reason: FACTORY_DISPATCH_BLOCK_REASONS.BLOCKED_LINE_ITEM,
   },
   {
-    order: orderFor(accessory),
-    lines: [persistedLine(accessory, 0, accessoryRouting)],
-    reason: FACTORY_DISPATCH_BLOCK_REASONS.ACCESSORY_LINE_ITEM,
-  },
-  {
     order: orderFor(untrustedPayloadItem),
     lines: [persistedLine(untrustedPayloadItem, 0, unknownRouting)],
     reason: FACTORY_DISPATCH_BLOCK_REASONS.UNKNOWN_LINE_ITEM,
-  },
-  {
-    order: orderFor(validWallpaper, accessory),
-    lines: [
-      persistedLine(validWallpaper, 0, validWallpaperRouting),
-      persistedLine(accessory, 1, accessoryRouting),
-    ],
-    reason: FACTORY_DISPATCH_BLOCK_REASONS.ACCESSORY_LINE_ITEM,
   },
 ];
 
@@ -642,6 +638,14 @@ for (const blockedCase of blockedCases) {
   });
   assert.equal(gate.allowed, false);
   assert.equal(gate.reason, blockedCase.reason);
+  const readiness = await inspectOrderFactoryReadiness({
+    order: blockedCase.order,
+    lineItems: blockedCase.lines,
+    jobs: [],
+    artifacts: [],
+  });
+  assert.equal(readiness.ready, false);
+  assert.equal(readiness.reason, blockedCase.reason);
 
   const result = await ensureOrderFactoryUploadTask({
     order: blockedCase.order,
@@ -758,4 +762,52 @@ assert.equal(
   FACTORY_DISPATCH_BLOCK_REASONS.ORDER_MANUAL_REVIEW
 );
 
+
+for (const sku of [
+  'FUTURE-FACTORY-PRODUCT', '283-394.0', '283-391.0',
+  '283-388.0', '283-386.0', '283-390.0', '283-389.0', '20-140.1-3-extra',
+]) {
+  const routing = classifyShopifyLineItem(item(901, sku), routingOptions);
+  assert.equal(routing.classification, LINE_ITEM_CLASSIFICATIONS.ACCESSORY);
+  assert.equal(routing.routingState, LINE_ITEM_ROUTING_STATES.PRODUCTION_READY);
+  assert.equal(routing.validation, null);
+}
+for (const name of [
+  PRIVATE_CONFIGURATOR_PAYLOAD_PROPERTY, LEGACY_CONFIGURATOR_PAYLOAD_PROPERTY,
+  PRIVATE_CONFIGURATOR_INSTANCE_PROPERTY, LEGACY_CONFIGURATOR_INSTANCE_PROPERTY,
+]) {
+  for (const value of [null, '', '{malformed', 'instance']) {
+    const source = item(902, '283-394.0', [{ name, value }]);
+    assert.equal(resolveConfiguratorProperties(source.properties).hasMarker, true);
+    const routing = classifyShopifyLineItem(source, routingOptions);
+    assert.equal(routing.classification, LINE_ITEM_CLASSIFICATIONS.UNKNOWN);
+    assert.equal(routing.routingState, LINE_ITEM_ROUTING_STATES.FACTORY_BLOCKED);
+    assert.equal(evaluateFactoryDispatchGate({
+      order: orderFor(source),
+      lineItems: [persistedLine(source, 0, accessoryRouting)],
+    }).allowed, false);
+  }
+}
+for (const quantity of [0, -1, 1.5, null, '3']) {
+  const source = { ...accessory, quantity };
+  assert.equal(classifyShopifyLineItem(source, routingOptions).routingState,
+    LINE_ITEM_ROUTING_STATES.FACTORY_BLOCKED);
+}
+for (const sources of [[accessory], [validWallpaper, accessory]]) {
+  const lines = sources.map((source, index) => persistedLine(
+    source, index, classifyShopifyLineItem(source, routingOptions)
+  ));
+  assert.equal(evaluateFactoryDispatchGate({
+    order: orderFor(...sources), lineItems: lines,
+  }).allowed, true);
+  const task = await ensureOrderFactoryUploadTask({
+    order: orderFor(...sources), orderLineItems: lines,
+    orderPackage, artifact, config: factoryConfig, runtime: factoryRuntime,
+  });
+  assert.equal(task.created, true);
+}
+assert.equal(evaluateFactoryDispatchGate({
+  order: orderFor(missingConfiguratorWallpaper),
+  lineItems: [persistedLine(missingConfiguratorWallpaper, 0, accessoryRouting)],
+}).allowed, false);
 console.log('line-item routing safety smoke ok');

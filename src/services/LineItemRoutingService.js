@@ -8,35 +8,21 @@ import {
   isWallpaperSku,
   validateConfiguratorLineItem,
 } from './PreflightValidationService.js';
+import { resolveConfiguratorProperties } from './ConfiguratorPropertyResolver.js';
 
 function normalizeSku(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-export function isAccessorySku(
-  sku,
-  accessorySkus = env.ACCESSORY_SKUS
-) {
-  const normalizedSku = normalizeSku(sku);
-
-  if (!normalizedSku) {
-    return false;
-  }
-
-  return (Array.isArray(accessorySkus) ? accessorySkus : []).some(
-    (configuredSku) => normalizeSku(configuredSku) === normalizedSku
-  );
 }
 
 export function classifyShopifyLineItem(
   lineItem,
   {
     wallpaperSkus = env.WALLPAPER_SKUS,
-    accessorySkus = env.ACCESSORY_SKUS,
     validationOptions,
   } = {}
 ) {
-  const sku = lineItem?.sku;
+  const sku = normalizeSku(lineItem?.sku);
+  const { hasMarker } = resolveConfiguratorProperties(lineItem?.properties);
 
   // Wallpaper takes precedence over every other route. A broken item under
   // the trusted wallpaper SKU contract must never fall through to accessory.
@@ -58,11 +44,17 @@ export function classifyShopifyLineItem(
     };
   }
 
-  if (isAccessorySku(sku, accessorySkus)) {
+  if (sku && !hasMarker) {
+    const validQuantity =
+      Number.isSafeInteger(lineItem?.quantity) && lineItem.quantity > 0;
     return {
       classification: LINE_ITEM_CLASSIFICATIONS.ACCESSORY,
-      routingState: LINE_ITEM_ROUTING_STATES.FACTORY_BLOCKED,
-      routingReason: LINE_ITEM_ROUTING_REASONS.ACCESSORY_XML_UNRESOLVED,
+      routingState: validQuantity
+        ? LINE_ITEM_ROUTING_STATES.PRODUCTION_READY
+        : LINE_ITEM_ROUTING_STATES.FACTORY_BLOCKED,
+      routingReason: validQuantity
+        ? null
+        : LINE_ITEM_ROUTING_REASONS.INVALID_ACCESSORY_QUANTITY,
       validation: null,
     };
   }
@@ -70,12 +62,13 @@ export function classifyShopifyLineItem(
   return {
     classification: LINE_ITEM_CLASSIFICATIONS.UNKNOWN,
     routingState: LINE_ITEM_ROUTING_STATES.FACTORY_BLOCKED,
-    routingReason: LINE_ITEM_ROUTING_REASONS.UNKNOWN_SKU,
+    routingReason: sku
+      ? LINE_ITEM_ROUTING_REASONS.CONFIGURATOR_SKU_MISMATCH
+      : LINE_ITEM_ROUTING_REASONS.MISSING_SKU,
     validation: null,
   };
 }
 
 export default {
   classifyShopifyLineItem,
-  isAccessorySku,
 };

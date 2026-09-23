@@ -136,7 +136,6 @@ const env = {
     30
   ),
   WALLPAPER_SKUS: csvFromEnv('WALLPAPER_SKUS', []),
-  ACCESSORY_SKUS: csvFromEnv('ACCESSORY_SKUS', []),
   CONFIGURATOR_MAX_OUTPUT_WIDTH_MM: positiveNumberFromEnv(
     'CONFIGURATOR_MAX_OUTPUT_WIDTH_MM',
     20000
