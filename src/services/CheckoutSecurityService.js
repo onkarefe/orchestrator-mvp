@@ -94,8 +94,8 @@ function lineProof(line, currency, shopCurrency) {
       line.quantity !== 1 || typeof line.sku !== 'string' || !line.sku.trim()) {
     fail('CHECKOUT_LINE_MISMATCH');
   }
-  // Draft configured unit price in checkout currency, before discounts/tax.
-  // V1 rejects configured-line discounts: they need a separate signed contract.
+  // Server-calculated pre-discount Draft priceOverride in checkout currency.
+  // Shopify discounts do not change this signed unit-price contract.
   const money = line.price_set?.presentment_money;
   const shopMoney = line.price_set?.shop_money;
   if (!shopMoney || shopMoney.currency_code !== shopCurrency) fail('CHECKOUT_CURRENCY_MISMATCH');
@@ -104,10 +104,6 @@ function lineProof(line, currency, shopCurrency) {
     fail('CHECKOUT_PRICE_MISMATCH');
   }
   if (!money || money.currency_code !== currency) fail('CHECKOUT_CURRENCY_MISMATCH');
-  if (canonicalMoney(line.total_discount ?? '0') !== '0' ||
-      (line.discount_allocations ?? []).some(d => canonicalMoney(d.amount) !== '0')) {
-    fail('CHECKOUT_PRICE_MISMATCH');
-  }
   return {
     configurator_instance_id: instance,
     variant_id: identity(line.variant_id),

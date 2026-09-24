@@ -57,7 +57,7 @@ let scenarios = 0;
 function test(name, fn) { fn(); scenarios++; }
 
 test('ordinary only', () => assert.equal(check({ line_items: [accessory] }).result, 'NOT_APPLICABLE'));
-test('valid signature', () => assert.equal(check(sign(payload())).result, 'PASS'));
+test('valid signature without discounts', () => assert.equal(check(sign(payload())).result, 'PASS'));
 test('proof missing despite draft origin', () => assert.equal(check(payload()).reason, 'CHECKOUT_PROOF_MISSING'));
 test('signature missing', () => { const p = sign(payload()); p.note_attributes.pop(); assert.equal(check(p).reason, 'CHECKOUT_SIGNATURE_MISSING'); });
 test('invalid signature', () => { const p = sign(payload()); p.note_attributes[2].value = '0'.repeat(64); assert.equal(check(p).reason, 'CHECKOUT_SIGNATURE_INVALID'); });
@@ -84,9 +84,47 @@ for (const [name, change, reason] of [
   ['instance', p => { p.line_items[0].properties[0].value='other'; }, 'CHECKOUT_LINE_MISMATCH'],
   ['quantity', p => { p.line_items[0].quantity=2; }, 'CHECKOUT_LINE_MISMATCH'],
   ['SKU', p => { p.line_items[0].sku='other'; }, 'CHECKOUT_LINE_MISMATCH'],
-  ['discount', p => { p.line_items[0].discount_allocations=[{amount:'1.00'}]; }, 'CHECKOUT_PRICE_MISMATCH'],
   ['extra configured line', p => { const l=structuredClone(p.line_items[0]); l.id=13; l.properties[0].value='instance-2'; p.line_items.push(l); }, 'CHECKOUT_LINE_MISMATCH'],
 ]) test(name, () => { const p=sign(payload()); change(p); assert.equal(check(p).reason, reason, name); });
+// Discounts are applied after signing the server-calculated pre-discount price.
+for (const [name, discount] of [
+  ['total_discount', { total_discount: '12.34' }],
+  ['discount_allocations', { discount_allocations: [{ amount: '12.34' }] }],
+]) test('valid configured line with ' + name, () => {
+  const p = sign(payload());
+  const proofBefore = p.note_attributes[1].value;
+  Object.assign(p.line_items[0], discount);
+  assert.equal(check(p).result, 'PASS');
+  assert.equal(canonicalCheckoutProof(buildCheckoutProof(p, config)), proofBefore);
+});
+test('mixed cart with configured-line discount', () => {
+  const p = payload();
+  p.line_items.push(structuredClone(accessory));
+  sign(p);
+  Object.assign(p.line_items[0], {
+    total_discount: '12.34', discount_allocations: [{ amount: '12.34' }],
+  });
+  assert.equal(check(p).result, 'PASS');
+  assert.equal(JSON.parse(p.note_attributes[1].value).lines.length, 1);
+});
+for (const [name, change] of [
+  ['shop price', line => { line.price = '111.06'; }],
+  ['presentment price', line => { line.price_set.presentment_money.amount = '111.06'; }],
+  ['all pre-discount prices', line => {
+    line.price = '111.06';
+    line.price_set.shop_money.amount = '111.06';
+    line.price_set.presentment_money.amount = '111.06';
+  }],
+]) test('discounted order with tampered ' + name, () => {
+  const p = sign(payload());
+  Object.assign(p.line_items[0], {
+    total_discount: '12.34', discount_allocations: [{ amount: '12.34' }],
+  });
+  assert.equal(check(p).result, 'PASS');
+  // Even internally consistent final-paid amounts must not replace signed price.
+  change(p.line_items[0]);
+  assert.equal(check(p).reason, 'CHECKOUT_PRICE_MISMATCH');
+});
 test('duplicate instance', () => {
   const p=sign(payload()); const l=structuredClone(p.line_items[0]); l.id=13; p.line_items.push(l);
   assert.equal(check(p).reason, 'CHECKOUT_DUPLICATE_INSTANCE');
