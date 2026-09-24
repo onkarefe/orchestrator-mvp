@@ -1,80 +1,54 @@
 <section class="page">
   <header class="page-header">
     <div>
-      <p class="eyebrow">Overview</p>
-      <h1>Production overview</h1>
-      <p class="page-description">Review incoming orders, processing jobs, and webhook activity.</p>
+      <p class="eyebrow">Overview</p><h1>Production monitoring</h1><p class="page-description">Current persisted state across the 50 most recent orders. Counts below refer only to this sample.</p>
     </div>
   </header>
-
-  <div class="stat-grid">
-    <a class="stat-card" href="/admin/orders">
-      <span class="stat-label">Orders</span>
-      <strong class="stat-value">Order inbox</strong>
-      <span class="stat-meta">Open production orders</span>
-    </a>
-
-    <a class="stat-card" href="/admin/jobs">
-      <span class="stat-label">Jobs</span>
-      <strong class="stat-value">Processing queue</strong>
-      <span class="stat-meta">Inspect job status and output</span>
-    </a>
-
-    <a class="stat-card" href="/admin/webhooks">
-      <span class="stat-label">Webhooks</span>
-      <strong class="stat-value">Technical inbox</strong>
-      <span class="stat-meta">Review Shopify events</span>
-    </a>
-
-    <a class="stat-card" href="/admin/artifacts">
-      <span class="stat-label">Artifacts</span>
-      <strong class="stat-value">Generated output</strong>
-      <span class="stat-meta">Inspect ZIP manifests and checksums</span>
-    </a>
-
-    <a class="stat-card" href="/admin/factory-callbacks">
-      <span class="stat-label">Factory</span>
-      <strong class="stat-value">Callback log</strong>
-      <span class="stat-meta">Review factory and NEXO statuses</span>
-    </a>
-
-    <a class="stat-card" href="/admin/shopify-update-tasks">
-      <span class="stat-label">Shopify</span>
-      <strong class="stat-value">Dry-run tasks</strong>
-      <span class="stat-meta">Inspect suppressed updates</span>
-    </a>
-  </div>
-
+  <dl class="metric-grid">
+    <div class="metric">
+      <dt>Recent orders</dt>
+      <dd><%= summary.total %></dd>
+    </div>
+    <div class="metric">
+      <dt>In progress</dt>
+      <dd><%= summary.active %></dd>
+    </div>
+    <div class="metric">
+      <dt>Needs attention</dt>
+      <dd><%= summary.attention.length %></dd>
+    </div>
+    <div class="metric">
+      <dt>Security holds</dt>
+      <dd><%= summary.holds %></dd>
+    </div>
+  </dl>
   <section class="card">
     <div class="card-header">
-      <div>
-        <p class="section-label">Workspace</p>
-        <h2>Production flow</h2>
-      </div>
+      <h2>Needs attention</h2><span class="muted">Within the recent-order sample</span>
     </div>
-
-    <div class="workflow">
-      <div class="workflow-step">
-        <span class="workflow-index">01</span>
-        <div>
-          <strong>Receive</strong>
-          <p>Shopify orders enter through the webhook inbox.</p>
-        </div>
+    <% if (!summary.attention.length) { %><p class="healthy-note">No recorded holds, failures, review reasons, or errors in this sample.</p><% } else { %>
+    <div class="anomaly-list">
+      <% summary.attention.forEach(order => { %>
+      <div>
+        <a class="primary-link" href="/admin/orders/<%= order.id %>"><%= order.shopify_order_number || '#' + order.id %></a>
+        <span class="status-badge <%= admin.statusClass(order.status) %>"><%= admin.statusLabel(order.status) %></span> <span class="status-badge <%= admin.statusClass(admin.security(order).result) %>"><%= admin.statusLabel(admin.security(order).result) %></span>
+        <% if (order.manual_review_reason) { %><span class="status-badge status-warning">Review required</span><% } %>
+        <% if (order.last_error) { %><span class="status-badge status-critical">Error recorded</span><% } %>
       </div>
-      <div class="workflow-step">
-        <span class="workflow-index">02</span>
-        <div>
-          <strong>Process</strong>
-          <p>Configurator line items become production jobs.</p>
-        </div>
-      </div>
-      <div class="workflow-step">
-        <span class="workflow-index">03</span>
-        <div>
-          <strong>Deliver</strong>
-          <p>Completed jobs expose downloadable ZIP artifacts.</p>
-        </div>
-      </div>
+      <% }) %>
+    </div>
+    <% } %>
+  </section>
+  <section class="table-card">
+    <div class="table-card-header">
+      <h2>Recent orders</h2><a href="/admin/orders">View orders</a>
+    </div>
+    <%- include('../partials/orders-table', { orders: orders.slice(0, 10) }) %>
+  </section>
+  <section class="card">
+    <h2>Diagnostics</h2>
+    <div class="diagnostic-links">
+      <a href="/admin/jobs">Jobs</a><a href="/admin/webhooks">Webhooks</a><a href="/admin/factory-callbacks">Factory callbacks</a><a href="/admin/artifacts">Artifacts</a><a href="/admin/shopify-update-tasks">Shopify update tasks</a>
     </div>
   </section>
 </section>

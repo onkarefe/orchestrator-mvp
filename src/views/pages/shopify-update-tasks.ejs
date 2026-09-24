@@ -1,83 +1,13 @@
-<%
-  const display = (value) =>
-    value === null || value === undefined || value === '' ? '-' : value;
-  const statusClass = (value) =>
-    `status-${String(value || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-  const dryRunLabel = (value) => value ? 'Dry-run' : 'Live candidate';
-  const writeBlockReason = (task) =>
-    task.result_json?.externalWriteBlockedReason ||
-    task.result_json?.writeSuppressedReason ||
-    task.payload_json?.writeSuppressedReason ||
-    '-';
-  const outcomeAt = (task) =>
-    task.completed_at || task.skipped_at || task.failed_at || task.processed_at || '-';
-%>
 <section class="page">
   <header class="page-header">
     <div>
-      <p class="eyebrow">Shopify</p>
-      <h1>Shopify update tasks</h1>
-      <p class="page-description">Audited Shopify update plans and executor outcomes prepared from factory callbacks.</p>
+      <p class="eyebrow">Diagnostics</p><h1>Shopify update tasks</h1><p class="page-description">Persisted Shopify task state and executor outcomes.</p>
     </div>
   </header>
-
   <section class="table-card">
     <div class="table-card-header">
-      <div>
-        <h2>Update tasks</h2>
-        <p class="muted"><%= shopifyUpdateTasks.length %> recent task<%= shopifyUpdateTasks.length === 1 ? '' : 's' %></p>
-      </div>
+      <h2>Shopify update tasks</h2><p class="muted"><%= shopifyUpdateTasks.length %> most recent records</p>
     </div>
-
-    <div class="table-scroll">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th scope="col">ID</th>
-            <th scope="col">Order</th>
-            <th scope="col">Shopify order</th>
-            <th scope="col">Task type</th>
-            <th scope="col">Status</th>
-            <th scope="col">Dry-run</th>
-            <th scope="col">Attempts</th>
-            <th scope="col">Write block</th>
-            <th scope="col">Last error</th>
-            <th scope="col">Outcome time</th>
-            <th scope="col" class="table-action">Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          <% if (shopifyUpdateTasks.length === 0) { %>
-            <tr>
-              <td class="empty-state" colspan="11">No Shopify update tasks recorded yet.</td>
-            </tr>
-          <% } %>
-
-          <% shopifyUpdateTasks.forEach((task) => { %>
-            <tr>
-              <td><a class="primary-link mono" href="/admin/shopify-update-tasks/<%= task.id %>">#<%= task.id %></a></td>
-              <td class="mono">
-                <% if (task.order_id) { %>
-                  <a class="secondary-link mono" href="/admin/orders/<%= task.order_id %>">#<%= task.order_id %></a>
-                <% } else { %>
-                  -
-                <% } %>
-              </td>
-              <td class="mono"><%= display(task.shopify_order_id) %></td>
-              <td class="mono"><%= display(task.task_type) %></td>
-              <td><span class="status-badge <%= statusClass(task.status) %>"><%= display(task.status) %></span></td>
-              <td><span class="status-badge status-neutral"><%= dryRunLabel(task.dry_run) %></span></td>
-              <td><%= display(task.attempt_count) %> / <%= display(task.max_attempts) %></td>
-              <td class="mono"><%= display(writeBlockReason(task)) %></td>
-              <td><%= display(task.last_error) %></td>
-              <td class="table-date"><%= display(outcomeAt(task)) %></td>
-              <td class="table-action">
-                <a class="button button-secondary button-small" href="/admin/shopify-update-tasks/<%= task.id %>">Open</a>
-              </td>
-            </tr>
-          <% }) %>
-        </tbody>
-      </table>
-    </div>
+    <%- include('../partials/shopify-update-tasks-table', { shopifyUpdateTasks }) %>
   </section>
 </section>

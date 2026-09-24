@@ -1,0 +1,33 @@
+<div class="table-scroll" tabindex="0" role="region" aria-label="Shopify update tasks">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th scope="col">Task</th>
+        <th scope="col">Order</th>
+        <th scope="col">Type</th>
+        <th scope="col">Status</th>
+        <th scope="col">Attempts</th>
+        <th scope="col" class="table-date">Outcome</th>
+        <th scope="col" class="table-action">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if (!shopifyUpdateTasks.length) { %>
+      <tr>
+        <td class="empty-state" colspan="7">No shopify update tasks recorded.</td>
+      </tr>
+      <% } %>
+      <% shopifyUpdateTasks.forEach((task) => { %>
+      <tr>
+        <td><a class="primary-link" href="/admin/shopify-update-tasks/<%= task.id %>">#<%= task.id %></a></td>
+        <td><% if (task.order_id) { %><a class="primary-link" href="/admin/orders/<%= task.order_id %>">#<%= task.order_id %></a><% } else { %>&mdash;<% } %></td>
+        <td><%= admin.display(task.task_type) %></td>
+        <td><span class="status-badge <%= admin.statusClass(task.status) %>"><%= admin.statusLabel(task.status) %></span><span class="cell-indicators"><% if (task.manual_review_reason) { %><span class="status-badge status-warning">Review required</span><% } %><% if (task.last_error) { %><span class="status-badge status-critical">Error recorded</span><% } %></span></td>
+        <td><%= admin.display(task.attempt_count) %> / <%= admin.display(task.max_attempts) %></td>
+        <td class="table-date"><%= admin.date(task.completed_at || task.skipped_at || task.failed_at || task.processed_at) %><span class="cell-meta"><%= task.dry_run === null || task.dry_run === undefined ? 'Mode not recorded' : Number(task.dry_run) ? 'Dry-run' : 'Live' %></span></td>
+        <td class="table-action"><a class="button button-secondary button-small" aria-label="Inspect shopify-update-tasks record <%= task.id %>" href="/admin/shopify-update-tasks/<%= task.id %>">Open</a></td>
+      </tr>
+      <% }) %>
+    </tbody>
+  </table>
+</div>

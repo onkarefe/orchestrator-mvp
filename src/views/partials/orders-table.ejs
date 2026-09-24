@@ -1,0 +1,33 @@
+<div class="table-scroll" tabindex="0" role="region" aria-label="Orders">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th scope="col">Order</th>
+        <th scope="col">Customer</th>
+        <th scope="col">Security</th>
+        <th scope="col">Production</th>
+        <th scope="col">Factory</th>
+        <th scope="col" class="table-date">Created</th>
+        <th scope="col" class="table-action">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if (!orders.length) { %>
+      <tr>
+        <td class="empty-state" colspan="7">No orders recorded.</td>
+      </tr>
+      <% } %>
+      <% orders.forEach((order) => { %>
+      <tr>
+        <td><a class="primary-link" href="/admin/orders/<%= order.id %>"><%= order.shopify_order_number || '#' + order.id %></a><span class="cell-meta mono">Internal #<%= order.id %></span></td>
+        <td><%= admin.display(order.customer_name) %><span class="cell-meta"><%= admin.display(order.customer_email) %></span></td>
+        <td><% const security = admin.security(order); %><span class="status-badge <%= admin.statusClass(security.held ? 'SECURITY_HOLD' : security.result) %>"><%= admin.statusLabel(security.held ? 'SECURITY_HOLD' : security.result) %></span></td>
+        <td><span class="status-badge <%= admin.statusClass(order.status) %>"><%= admin.statusLabel(order.status) %></span><span class="cell-indicators"><% if (order.manual_review_reason) { %><span class="status-badge status-warning">Review required</span><% } %><% if (order.last_error) { %><span class="status-badge status-critical">Error recorded</span><% } %></span></td>
+        <td><span class="status-badge <%= admin.statusClass(order.factory_status) %>"><%= admin.statusLabel(order.factory_status) %></span><span class="cell-meta"><%= admin.display(order.factory_order_id) %></span></td>
+        <td class="table-date"><%= admin.date(order.created_at) %></td>
+        <td class="table-action"><a class="button button-secondary button-small" aria-label="Inspect orders record <%= order.id %>" href="/admin/orders/<%= order.id %>">Open</a></td>
+      </tr>
+      <% }) %>
+    </tbody>
+  </table>
+</div>

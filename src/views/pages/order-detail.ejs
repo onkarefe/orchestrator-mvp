@@ -1,317 +1,251 @@
-<%
-  const display = (value) =>
-    value === null || value === undefined || value === '' ? '\u2014' : value;
-  const statusClass = (value) =>
-    `status-${String(value || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-%>
+<% const security = admin.security(order); %>
 <section class="page">
-  <header class="page-header page-header-with-actions">
+  <header class="page-header">
     <div>
-      <a class="back-link" href="/admin/orders">Back to orders</a>
-      <p class="eyebrow">Order detail</p>
-      <h1><%= display(order.shopify_order_number) %></h1>
-      <p class="page-description">Internal order #<%= order.id %></p>
+      <a class="back-link" href="/admin/orders">Orders</a><p class="eyebrow">Order detail</p><h1><%= order.shopify_order_number || '#' + order.id %></h1><p class="page-description">Internal order #<%= order.id %></p>
     </div>
-    <span class="status-badge status-badge-large <%= statusClass(order.status) %>">
-      <%= display(order.status) %>
-    </span>
   </header>
-
-  <% if (order.checkout_security_json) { const security = order.checkout_security_json; %>
-    <section class="card" role="status">
-      <h2>Checkout security: <%= security.result %></h2>
-      <p>Mode: <%= security.mode %> | Detected: <%= security.detectedAt %></p>
-      <p>Reason: <%= display(security.reason) %> | Source: <%= display(security.sourceName) %></p>
-      <% if (order.status === 'SECURITY_HOLD') { %>
-        <p><strong>Factory processing is blocked. Automatic recovery cannot release this hold.</strong></p>
-      <% } %>
-    </section>
-  <% } %>
-
-  <div class="detail-grid">
-    <section class="card">
-      <div class="card-header">
-        <div>
-          <p class="section-label">Order</p>
-          <h2>Summary</h2>
-        </div>
-      </div>
-      <dl class="meta-grid">
-        <div class="meta-item">
-          <dt>Internal ID</dt>
-          <dd class="mono">#<%= order.id %></dd>
-        </div>
-        <div class="meta-item">
-          <dt>Shopify order ID</dt>
-          <dd class="mono"><%= display(order.shopify_order_id) %></dd>
-        </div>
-        <div class="meta-item">
-          <dt>Order number</dt>
-          <dd><%= display(order.shopify_order_number) %></dd>
-        </div>
-        <div class="meta-item">
-          <dt>Financial status</dt>
-          <dd><%= display(order.financial_status) %></dd>
-        </div>
-        <div class="meta-item">
-          <dt>Orchestrator status</dt>
-          <dd><span class="status-badge <%= statusClass(order.status) %>"><%= display(order.status) %></span></dd>
-        </div>
-        <div class="meta-item">
-          <dt>Manual review reason</dt>
-          <dd><%= display(order.manual_review_reason) %></dd>
-        </div>
-        <div class="meta-item">
-          <dt>Last error</dt>
-          <dd><%= display(order.last_error) %></dd>
-        </div>
-        <div class="meta-item">
-          <dt>Factory status</dt>
-          <dd><%= display(order.factory_status) %></dd>
-        </div>
-        <div class="meta-item">
-          <dt>Factory order ID</dt>
-          <dd class="mono"><%= display(order.factory_order_id) %></dd>
-        </div>
-        <div class="meta-item">
-          <dt>Created</dt>
-          <dd><%= display(order.created_at) %></dd>
-        </div>
-        <div class="meta-item">
-          <dt>Updated</dt>
-          <dd><%= display(order.updated_at) %></dd>
-        </div>
-      </dl>
-    </section>
-
-    <section class="card">
-      <div class="card-header">
-        <div>
-          <p class="section-label">Customer</p>
-          <h2>Contact</h2>
-        </div>
-      </div>
-      <dl class="meta-grid meta-grid-single">
-        <div class="meta-item">
-          <dt>Name</dt>
-          <dd><%= display(order.customer_name) %></dd>
-        </div>
-        <div class="meta-item">
-          <dt>Email</dt>
-          <dd><%= display(order.customer_email) %></dd>
-        </div>
-      </dl>
-    </section>
-  </div>
-
-  <section class='table-card'>
-    <div class='table-card-header'>
+  <section class="card">
+    <dl class="summary-strip">
       <div>
-        <h2>Production chain</h2>
-        <p class='muted'>Read-only state assembled from persisted production records.</p>
+        <dt>Production</dt>
+        <dd><span class="status-badge <%= admin.statusClass(order.status) %>"><%= admin.statusLabel(order.status) %></span></dd>
       </div>
-    </div>
-    <div class='table-scroll'>
-      <table class='data-table'>
-        <thead><tr><th>Stage</th><th>Records</th><th>Current state</th></tr></thead>
-        <tbody>
-          <% monitoring.stages.forEach((stage) => { %>
-            <tr>
-              <td><%= stage.name %></td>
-              <td><%= stage.count %></td>
-              <td><span class='status-badge <%= statusClass(stage.status) %>'><%= display(stage.status) %></span></td>
-            </tr>
-          <% }) %>
-        </tbody>
-      </table>
-    </div>
+      <div>
+        <dt>Checkout security</dt>
+        <dd><span class="status-badge <%= admin.statusClass(security.held ? 'SECURITY_HOLD' : security.result) %>"><%= admin.statusLabel(security.held ? 'SECURITY_HOLD' : security.result) %></span></dd>
+      </div>
+      <div>
+        <dt>Factory / NEXO</dt>
+        <dd><span class="status-badge <%= admin.statusClass(orderPackage?.factory_status || order.factory_status) %>"><%= admin.statusLabel(orderPackage?.factory_status || order.factory_status) %></span><span class="cell-meta mono"><%= admin.display(orderPackage?.nexo_order_id || order.factory_order_id) %></span></dd>
+      </div>
+      <div>
+        <dt>Created</dt>
+        <dd><%= admin.date(order.created_at) %></dd>
+      </div>
+    </dl>
   </section>
-
-  <section class='card'>
-    <div class='card-header'><div><p class='section-label'>Operations</p><h2>Anomalies</h2></div></div>
-    <% if (monitoring.anomalies.length === 0) { %>
-      <p class='muted'>No production-chain anomaly detected from current persisted state.</p>
-    <% } else { %>
-      <dl class='meta-grid meta-grid-single'>
-        <% monitoring.anomalies.forEach((anomaly) => { %>
-          <div class='meta-item'>
-            <dt class='mono'><%= anomaly.code %></dt>
-            <dd><span class='status-badge <%= statusClass(anomaly.severity) %>'><%= anomaly.severity %></span> <%= anomaly.message %></dd>
-          </div>
-        <% }) %>
-      </dl>
+  <% if (security.held) { %>
+  <section class="alert-panel" role="alert">
+    <strong>SECURITY_HOLD &mdash; Factory processing is blocked.</strong><p>Automatic recovery cannot release this hold. Inspect the persisted checkout security result below.</p>
+  </section>
+  <% } %>
+  <section class="card">
+    <div class="card-header">
+      <h2>Anomalies</h2><span class="muted">Persisted production state</span>
+    </div>
+    <% if (!monitoring.anomalies.length) { %><p class="healthy-note">No production-chain anomaly detected from the current persisted state.</p><% } else { %>
+    <div class="anomaly-list">
+      <% monitoring.anomalies.forEach(anomaly => { %>
+      <div class="notice<%= anomaly.severity === 'critical' ? '' : ' notice-warning' %>">
+        <span class="mono"><%= anomaly.code %></span><span class="status-badge <%= admin.statusClass(anomaly.severity) %>"><%= admin.statusLabel(anomaly.severity) %></span> <%= anomaly.message %>
+      </div>
+      <% }) %>
+    </div>
     <% } %>
   </section>
-
-  <section class='table-card'>
-    <div class='table-card-header'><div><h2>Line-item routing</h2><p class='muted'><%= lineItems.length %> persisted line items</p></div></div>
-    <div class='table-scroll'><table class='data-table'>
-      <thead><tr><th>Position</th><th>Line item</th><th>SKU</th><th>Qty</th><th>Classification</th><th>Routing</th><th>Reason</th></tr></thead>
-      <tbody>
-        <% lineItems.forEach((lineItem) => { %><tr><td><%= lineItem.source_position %></td><td class='mono'><%= display(lineItem.shopify_line_item_id) %></td><td class='mono'><%= display(lineItem.sku) %></td><td><%= display(lineItem.quantity) %></td><td><%= display(lineItem.classification) %></td><td><%= display(lineItem.routing_state) %></td><td><%= display(lineItem.routing_reason) %></td></tr><% }) %>
-        <% if (lineItems.length === 0) { %><tr><td class='empty-state' colspan='7'>No routed line items found.</td></tr><% } %>
-      </tbody>
-    </table></div>
-  </section>
-
-  <section class="table-card">
-    <div class="table-card-header">
-      <div>
-        <h2>Related jobs</h2>
-        <p class="muted"><%= jobs.length %> production job<%= jobs.length === 1 ? '' : 's' %></p>
+  <section class="card">
+    <div class="card-header">
+      <h2>Checkout security</h2>
+    </div>
+    <dl class="meta-grid meta-grid-three">
+      <div class="meta-item">
+        <dt>Result</dt>
+        <dd><span class="status-badge <%= admin.statusClass(security.result) %>"><%= admin.statusLabel(security.result) %></span></dd>
       </div>
-    </div>
-    <div class="table-scroll">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th scope="col">Job</th>
-            <th scope="col">Line item</th>
-            <th scope="col">Product</th>
-            <th scope="col">SKU</th>
-            <th scope="col">Status</th>
-            <th scope="col">Attempts</th>
-            <th scope="col">Manual review</th>
-            <th scope="col" class="table-action">Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          <% if (jobs.length === 0) { %>
-            <tr>
-              <td class="empty-state" colspan="8">No jobs found for this order.</td>
-            </tr>
-          <% } %>
-          <% jobs.forEach((job) => { %>
-            <tr>
-              <td class="mono">#<%= job.id %></td>
-              <td class="mono"><%= display(job.shopify_line_item_id) %></td>
-              <td><%= display(job.product_title) %></td>
-              <td class="mono"><%= display(job.sku) %></td>
-              <td><span class="status-badge <%= statusClass(job.status) %>"><%= display(job.status) %></span></td>
-              <td><%= display(job.attempt_count) %> / <%= display(job.max_attempts) %></td>
-              <td><%= display(job.manual_review_reason) %></td>
-              <td class="table-action">
-                <a class="button button-secondary button-small" href="/admin/jobs/<%= job.id %>">Open</a>
-              </td>
-            </tr>
-          <% }) %>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="table-card">
-    <div class="table-card-header">
-      <div>
-        <h2>Shopify intake webhooks</h2>
-        <p class='muted'><%= webhooks.length %> authenticated/deduplicated webhook records</p>
+      <div class="meta-item">
+        <dt>Mode</dt>
+        <dd><%= admin.display(security.mode) %></dd>
       </div>
-    </div>
-    <div class='table-scroll'><table class='data-table'>
-      <thead><tr><th>ID</th><th>Topic</th><th>Processing</th><th>Error</th><th>Received</th></tr></thead>
-      <tbody>
-        <% webhooks.forEach((webhook) => { %><tr><td class='mono'>#<%= webhook.id %></td><td><%= display(webhook.topic) %></td><td><%= display(webhook.processing_status) %></td><td><%= display(webhook.error_message) %></td><td><%= display(webhook.received_at || webhook.created_at) %></td></tr><% }) %>
-        <% if (webhooks.length === 0) { %><tr><td class='empty-state' colspan='5'>No persisted Shopify webhook records found.</td></tr><% } %>
-      </tbody>
-    </table></div>
-  </section>
-
-  <section class='table-card'>
-    <div class='table-card-header'><div><h2>Artifacts</h2><p class='muted'><%= artifacts.length %> persisted artifacts</p></div></div>
-    <div class='table-scroll'><table class='data-table'>
-      <thead><tr><th>ID</th><th>Type</th><th>File</th><th>Status</th><th>Validation</th><th>Created</th></tr></thead>
-      <tbody>
-        <% artifacts.forEach((artifact) => { %><tr><td class='mono'>#<%= artifact.id %></td><td><%= display(artifact.type) %></td><td class='mono'><%= display(artifact.file_name) %></td><td><%= display(artifact.status) %></td><td><%= display(artifact.validation_status) %></td><td><%= display(artifact.created_at) %></td></tr><% }) %>
-        <% if (artifacts.length === 0) { %><tr><td class='empty-state' colspan='6'>No artifacts found.</td></tr><% } %>
-      </tbody>
-    </table></div>
-  </section>
-
-  <section class='card'>
-    <div class='card-header'><div><p class='section-label'>Factory handoff</p><h2>Package, FTP, and NEXO</h2></div></div>
-    <dl class='meta-grid'>
-      <div class='meta-item'><dt>Package ID</dt><dd class='mono'><%= orderPackage ? '#' + orderPackage.id : '—' %></dd></div>
-      <div class='meta-item'><dt>Order number</dt><dd class='mono'><%= display(orderPackage?.order_number) %></dd></div>
-      <div class='meta-item'><dt>Package status</dt><dd><%= display(orderPackage?.status) %></dd></div>
-      <div class='meta-item'><dt>Content checksum</dt><dd class='mono'><%= display(orderPackage?.content_checksum) %></dd></div>
-      <div class='meta-item'><dt>FTP task</dt><dd class='mono'><%= uploadTask ? '#' + uploadTask.id : '—' %></dd></div>
-      <div class='meta-item'><dt>FTP status</dt><dd><%= display(uploadTask?.status) %></dd></div>
-      <div class='meta-item'><dt>FTP attempts</dt><dd><%= uploadTask ? display(uploadTask.attempt_count) + ' / ' + display(uploadTask.max_attempts) : '—' %></dd></div>
-      <div class='meta-item'><dt>FTP error</dt><dd><%= display(uploadTask?.last_error || uploadTask?.suppressed_reason) %></dd></div>
-      <div class='meta-item'><dt>FTP locked</dt><dd><%= display(uploadTask?.locked_at) %></dd></div>
-      <div class='meta-item'><dt>FTP uploaded</dt><dd><%= display(uploadTask?.uploaded_at) %></dd></div>
-      <div class='meta-item'><dt>NEXO order ID</dt><dd class='mono'><%= display(orderPackage?.nexo_order_id || order.factory_order_id) %></dd></div>
-      <div class='meta-item'><dt>NEXO status</dt><dd><%= display(orderPackage?.factory_status || order.factory_status) %></dd></div>
+      <div class="meta-item">
+        <dt>Detected</dt>
+        <dd><%= admin.date(security.detectedAt) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Reason</dt>
+        <dd class="mono"><%= admin.display(security.reason) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Source</dt>
+        <dd><%= admin.display(security.sourceName) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Proof digest</dt>
+        <dd><%= admin.display(security.proofDigest) %></dd>
+      </div>
     </dl>
-    <details class='disclosure'><summary><strong>FTP progress</strong><span class='disclosure-hint'>Show persisted progress</span></summary><pre class='code-panel'><%= JSON.stringify(uploadTask?.uploaded_files_json || [], null, 2) %></pre></details>
   </section>
-
-  <section class='table-card'>
-    <div class='table-card-header'><div><h2>NEXO callbacks</h2><p class='muted'><%= factoryCallbacks.length %> callback records</p></div></div>
-    <div class='table-scroll'><table class='data-table'>
-      <thead><tr><th>ID</th><th>External ID</th><th>Status</th><th>Processing</th><th>Error</th><th>Received</th></tr></thead>
-      <tbody>
-        <% factoryCallbacks.forEach((callback) => { %><tr><td class='mono'>#<%= callback.id %></td><td class='mono'><%= display(callback.factory_order_id) %></td><td><%= display(callback.status) %></td><td><%= display(callback.processing_status) %></td><td><%= display(callback.error_message) %></td><td><%= display(callback.received_at) %></td></tr><% }) %>
-        <% if (factoryCallbacks.length === 0) { %><tr><td class='empty-state' colspan='6'>No NEXO callback records found.</td></tr><% } %>
-      </tbody>
-    </table></div>
-  </section>
-
-  <section class='table-card'>
-    <div class='table-card-header'><div><h2>Shopify fulfillment/update tasks</h2><p class='muted'><%= shopifyUpdateTasks.length %> task records</p></div></div>
-    <div class='table-scroll'><table class='data-table'>
-      <thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Attempts</th><th>External ID</th><th>Error</th><th>Updated</th></tr></thead>
-      <tbody>
-        <% shopifyUpdateTasks.forEach((task) => { %><tr><td class='mono'>#<%= task.id %></td><td><%= display(task.task_type) %></td><td><%= display(task.status) %></td><td><%= display(task.attempt_count) %> / <%= display(task.max_attempts) %></td><td class='mono'><%= display(task.external_id) %></td><td><%= display(task.last_error) %></td><td><%= display(task.updated_at) %></td></tr><% }) %>
-        <% if (shopifyUpdateTasks.length === 0) { %><tr><td class='empty-state' colspan='7'>No Shopify update tasks found.</td></tr><% } %>
-      </tbody>
-    </table></div>
-  </section>
-
-  <section class='table-card'>
-    <div class='table-card-header'>
-      <div>
-        <h2>Activity log</h2>
-        <p class="muted"><%= logs.length %> event<%= logs.length === 1 ? '' : 's' %></p>
-      </div>
+  <section class="card">
+    <div class="card-header">
+      <h2>Production chain</h2><span class="muted">Recorded stage states</span>
     </div>
-    <div class="table-scroll">
+    <ol class="pipeline">
+      <% monitoring.stages.forEach(stage => { %><li><strong><%= stage.name %></strong><span class="status-badge <%= admin.statusClass(stage.status) %>"><%= admin.statusLabel(stage.status) %></span><span class="cell-meta"><%= stage.count %> record<%= stage.count === 1 ? '' : 's' %></span></li><% }) %>
+    </ol>
+  </section>
+  <section class="card">
+    <div class="card-header">
+      <h2>Order</h2>
+    </div>
+    <dl class="meta-grid meta-grid-three">
+      <div class="meta-item">
+        <dt>Shopify order ID</dt>
+        <dd class="mono"><%= admin.display(order.shopify_order_id) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Financial status</dt>
+        <dd><%= admin.display(order.financial_status) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Updated</dt>
+        <dd><%= admin.date(order.updated_at) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Customer</dt>
+        <dd><%= admin.display(order.customer_name) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Contact</dt>
+        <dd><%= admin.display(order.customer_email) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Manual review reason</dt>
+        <dd><%= admin.display(order.manual_review_reason) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Last error</dt>
+        <dd><%= admin.display(order.last_error) %></dd>
+      </div>
+    </dl>
+  </section>
+  <section class="table-card">
+    <div class="table-card-header">
+      <h2>Production items</h2><span class="muted">Persisted line-item routing</span>
+    </div>
+    <div class="table-scroll" tabindex="0" role="region" aria-label="Production items">
       <table class="data-table">
         <thead>
           <tr>
-            <th scope="col">Level</th>
-            <th scope="col">Step</th>
-            <th scope="col">Message</th>
-            <th scope="col">Created</th>
+            <th scope="col">Item / SKU</th>
+            <th scope="col">Quantity</th>
+            <th scope="col">Classification</th>
+            <th scope="col">Routing</th>
+            <th scope="col">Reason</th>
           </tr>
         </thead>
         <tbody>
-          <% if (logs.length === 0) { %>
-            <tr>
-              <td class="empty-state" colspan="4">No activity recorded.</td>
-            </tr>
-          <% } %>
-          <% logs.forEach((log) => { %>
-            <tr>
-              <td><span class="status-badge <%= statusClass(log.level) %>"><%= display(log.level) %></span></td>
-              <td class="mono"><%= display(log.step) %></td>
-              <td><%= display(log.message) %></td>
-              <td class="table-date"><%= display(log.created_at) %></td>
-            </tr>
+          <% lineItems.forEach(lineItem => { %>
+          <tr>
+            <td><%= admin.display(lineItem.title) %><span class="cell-meta mono"><%= admin.display(lineItem.sku) %></span><span class="cell-meta mono">Line <%= admin.display(lineItem.shopify_line_item_id) %> / Position <%= admin.display(lineItem.source_position) %></span></td>
+            <td><%= admin.display(lineItem.quantity) %></td>
+            <td><%= admin.display(lineItem.classification) %></td>
+            <td><span class="status-badge <%= admin.statusClass(lineItem.routing_state) %>"><%= admin.statusLabel(lineItem.routing_state) %></span></td>
+            <td><%= admin.display(lineItem.routing_reason) %></td>
+          </tr>
           <% }) %>
+          <% if (!lineItems.length) { %>
+          <tr>
+            <td colspan="5" class="empty-state">No routed line items recorded.</td>
+          </tr>
+          <% } %>
         </tbody>
       </table>
     </div>
   </section>
-
+  <section class="table-card">
+    <div class="table-card-header">
+      <h2>Render jobs</h2><p class="muted"><%= jobs.length %> records</p>
+    </div>
+    <%- include('../partials/jobs-table', { jobs }) %>
+  </section>
+  <section class="card">
+    <div class="card-header">
+      <h2>Factory handoff</h2>
+    </div>
+    <dl class="meta-grid meta-grid-three">
+      <div class="meta-item">
+        <dt>Package ID</dt>
+        <dd class="mono"><%= admin.display(orderPackage?.id) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Package order number</dt>
+        <dd><%= admin.display(orderPackage?.order_number) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Package status</dt>
+        <dd><span class="status-badge <%= admin.statusClass(orderPackage?.status) %>"><%= admin.statusLabel(orderPackage?.status) %></span></dd>
+      </div>
+      <div class="meta-item">
+        <dt>FTP task</dt>
+        <dd class="mono"><%= admin.display(uploadTask?.id) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>FTP status</dt>
+        <dd><span class="status-badge <%= admin.statusClass(uploadTask?.status) %>"><%= admin.statusLabel(uploadTask?.status) %></span></dd>
+      </div>
+      <div class="meta-item">
+        <dt>FTP attempts</dt>
+        <dd><%= admin.display(uploadTask?.attempt_count) %> / <%= admin.display(uploadTask?.max_attempts) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Uploaded</dt>
+        <dd><%= admin.date(uploadTask?.uploaded_at) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>FTP error / suppression</dt>
+        <dd><%= admin.display(uploadTask?.last_error || uploadTask?.suppressed_reason) %></dd>
+      </div>
+    </dl>
+  </section>
+  <section class="table-card">
+    <div class="table-card-header">
+      <h2>Factory callbacks</h2><p class="muted"><%= factoryCallbacks.length %> records</p>
+    </div>
+    <%- include('../partials/factory-callbacks-table', { factoryCallbacks }) %>
+  </section>
+  <section class="table-card">
+    <div class="table-card-header">
+      <h2>Shopify fulfillment / update tasks</h2><p class="muted"><%= shopifyUpdateTasks.length %> records</p>
+    </div>
+    <%- include('../partials/shopify-update-tasks-table', { shopifyUpdateTasks }) %>
+  </section>
   <details class="card disclosure">
-    <summary>
-      <span>
-        <span class="section-label">Technical data</span>
-        <strong>Raw Shopify payload</strong>
-      </span>
-      <span class="disclosure-hint">Show payload</span>
-    </summary>
-    <pre class="code-panel"><%= rawPayloadJson || '{}' %></pre>
+    <summary><strong>Technical diagnostics</strong><span class="disclosure-hint">Intake, artifacts, locks, and logs</span></summary>
+    <div class="disclosure-content">
+      <section class="card">
+        <div class="card-header">
+          <h2>Package diagnostics</h2>
+        </div>
+        <dl class="meta-grid meta-grid-three">
+          <div class="meta-item">
+            <dt>Content checksum</dt>
+            <dd class="mono"><%= admin.display(orderPackage?.content_checksum) %></dd>
+          </div>
+          <div class="meta-item">
+            <dt>FTP locked</dt>
+            <dd><%= admin.date(uploadTask?.locked_at) %></dd>
+          </div>
+        </dl>
+      </section>
+      <details class="card disclosure">
+        <summary><strong>FTP progress</strong></summary><pre class="code-panel"><%= admin.json(uploadTask?.uploaded_files_json || []) %></pre>
+      </details>
+      <section class="table-card">
+        <div class="table-card-header">
+          <h2>Shopify intake webhooks</h2><p class="muted"><%= webhooks.length %> records</p>
+        </div>
+        <%- include('../partials/webhooks-table', { webhooks }) %>
+      </section>
+      <section class="table-card">
+        <div class="table-card-header">
+          <h2>Artifacts</h2><p class="muted"><%= artifacts.length %> records</p>
+        </div>
+        <%- include('../partials/artifacts-table', { artifacts }) %>
+      </section>
+      <%- include('../partials/activity-log', { logs }) %>
+      <details class="card disclosure">
+        <summary><strong>Redacted Shopify payload</strong></summary><pre class="code-panel"><%= admin.json(rawPayloadJson || {}) %></pre>
+      </details>
+    </div>
   </details>
 </section>

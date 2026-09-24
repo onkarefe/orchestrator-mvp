@@ -1,82 +1,75 @@
-<%
-  const display = (value) =>
-    value === null || value === undefined || value === '' ? '-' : value;
-  const statusClass = (value) =>
-    `status-${String(value || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-%>
 <section class="page">
-  <header class="page-header page-header-with-actions">
+  <header class="page-header">
     <div>
-      <a class="back-link" href="/admin/artifacts">Back to artifacts</a>
-      <p class="eyebrow">Artifact detail</p>
-      <h1>Artifact #<%= artifact.id %></h1>
-      <p class="page-description"><%= display(artifact.file_name) %></p>
+      <a class="back-link" href="/admin/artifacts">Back to artifacts</a><p class="eyebrow">Artifact detail</p><h1>Artifact #<%= artifact.id %></h1><p class="page-description"><%= admin.display(artifact.file_name) %></p>
     </div>
-    <span class="status-badge status-badge-large <%= statusClass(artifact.status) %>">
-      <%= display(artifact.status) %>
-    </span>
+    <span class="status-badge <%= admin.statusClass(artifact.status) %>"><%= admin.statusLabel(artifact.status) %></span>
   </header>
-
   <section class="card">
     <div class="card-header">
-      <div>
-        <p class="section-label">Artifact</p>
-        <h2>Output record</h2>
-      </div>
+      <h2>Output record</h2>
     </div>
     <dl class="meta-grid meta-grid-three">
       <div class="meta-item">
-        <dt>Order ID</dt>
-        <dd class="mono"><%= display(artifact.order_id) %></dd>
+        <dt>Order</dt>
+        <dd><% if (artifact.order_id) { %><a href="/admin/orders/<%= artifact.order_id %>">#<%= artifact.order_id %></a><% } else { %>&mdash;<% } %></dd>
       </div>
       <div class="meta-item">
-        <dt>Job ID</dt>
-        <dd class="mono"><%= display(artifact.job_id) %></dd>
+        <dt>Job</dt>
+        <dd><% if (artifact.job_id) { %><a href="/admin/jobs/<%= artifact.job_id %>">#<%= artifact.job_id %></a><% } else { %>&mdash;<% } %></dd>
       </div>
       <div class="meta-item">
         <dt>Type</dt>
-        <dd class="mono"><%= display(artifact.type) %></dd>
+        <dd><%= admin.display(artifact.type) %></dd>
       </div>
       <div class="meta-item">
-        <dt>File name</dt>
-        <dd><%= display(artifact.file_name) %></dd>
-      </div>
-      <div class="meta-item">
-        <dt>File path</dt>
-        <dd class="mono"><%= display(artifact.file_path) %></dd>
-      </div>
-      <div class="meta-item">
-        <dt>Manifest path</dt>
-        <dd class="mono"><%= display(artifact.manifest_path) %></dd>
-      </div>
-      <div class="meta-item">
-        <dt>Checksum</dt>
-        <dd class="mono"><%= display(artifact.checksum) %></dd>
-      </div>
-      <div class="meta-item">
-        <dt>File count</dt>
-        <dd><%= display(artifact.file_count) %></dd>
-      </div>
-      <div class="meta-item">
-        <dt>Total size bytes</dt>
-        <dd><%= display(artifact.total_size_bytes) %></dd>
-      </div>
-      <div class="meta-item">
-        <dt>File size</dt>
-        <dd><%= display(artifact.file_size) %></dd>
-      </div>
-      <div class="meta-item">
-        <dt>Validation status</dt>
-        <dd><span class="status-badge <%= statusClass(artifact.validation_status) %>"><%= display(artifact.validation_status) %></span></dd>
-      </div>
-      <div class="meta-item">
-        <dt>Status</dt>
-        <dd><span class="status-badge <%= statusClass(artifact.status) %>"><%= display(artifact.status) %></span></dd>
+        <dt>Validation</dt>
+        <dd><span class="status-badge <%= admin.statusClass(artifact.validation_status) %>"><%= admin.statusLabel(artifact.validation_status) %></span></dd>
       </div>
       <div class="meta-item">
         <dt>Created</dt>
-        <dd><%= display(artifact.created_at) %></dd>
+        <dd><%= admin.date(artifact.created_at) %></dd>
       </div>
     </dl>
   </section>
+  <section class="card">
+    <div class="card-header">
+      <h2>File diagnostics</h2>
+    </div>
+    <dl class="meta-grid meta-grid-three">
+      <div class="meta-item">
+        <dt>File path</dt>
+        <dd class="mono"><%= admin.display(artifact.file_path) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Manifest path</dt>
+        <dd class="mono"><%= admin.display(artifact.manifest_path) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Checksum</dt>
+        <dd class="mono"><%= admin.display(artifact.checksum) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Download count</dt>
+        <dd><%= admin.display(artifact.download_count) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>File count</dt>
+        <dd><%= admin.display(artifact.file_count) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Total size (bytes)</dt>
+        <dd><%= admin.display(artifact.total_size_bytes) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>File size (bytes)</dt>
+        <dd><%= admin.display(artifact.file_size) %></dd>
+      </div>
+    </dl>
+  </section>
+  <% if (artifact.status === 'available') { %>
+  <div>
+    <a class="button button-secondary button-small" href="/admin/artifacts/<%= artifact.id %>/download">Download artifact</a>
+  </div>
+  <% } %>
 </section>

@@ -1,0 +1,31 @@
+<div class="table-scroll" tabindex="0" role="region" aria-label="Webhooks">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th scope="col">Webhook</th>
+        <th scope="col">Topic / Order</th>
+        <th scope="col">Processing</th>
+        <th scope="col">HMAC</th>
+        <th scope="col" class="table-date">Received</th>
+        <th scope="col" class="table-action">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if (!webhooks.length) { %>
+      <tr>
+        <td class="empty-state" colspan="6">No webhooks recorded.</td>
+      </tr>
+      <% } %>
+      <% webhooks.forEach((webhook) => { %>
+      <tr>
+        <td><a class="primary-link" href="/admin/webhooks/<%= webhook.id %>">#<%= webhook.id %></a></td>
+        <td><%= admin.display(webhook.topic) %><span class="cell-meta mono">Shopify <%= admin.display(webhook.shopify_order_id) %></span></td>
+        <td><span class="status-badge <%= admin.statusClass(webhook.processing_status) %>"><%= admin.statusLabel(webhook.processing_status) %></span><span class="cell-indicators"><% if (webhook.manual_review_reason) { %><span class="status-badge status-warning">Review required</span><% } %><% if (webhook.error_message) { %><span class="status-badge status-critical">Error recorded</span><% } %></span></td>
+        <td><span class="status-badge <%= admin.statusClass(admin.booleanLabel(webhook.hmac_valid)) %>"><%= admin.statusLabel(admin.booleanLabel(webhook.hmac_valid)) %></span></td>
+        <td class="table-date"><%= admin.date(webhook.received_at || webhook.created_at) %></td>
+        <td class="table-action"><a class="button button-secondary button-small" aria-label="Inspect webhooks record <%= webhook.id %>" href="/admin/webhooks/<%= webhook.id %>">Open</a></td>
+      </tr>
+      <% }) %>
+    </tbody>
+  </table>
+</div>

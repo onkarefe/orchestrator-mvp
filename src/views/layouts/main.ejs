@@ -1,90 +1,47 @@
 <%
   const currentTitle = title || 'Wandini Orchestrator';
-  const isOverview = currentTitle === 'Wandini Orchestrator';
-  const isOrders = currentTitle === 'Orders' || currentTitle.startsWith('Order #');
-  const isJobs = currentTitle === 'Jobs' || currentTitle.startsWith('Job #');
-  const isArtifacts = currentTitle === 'Artifacts' || currentTitle.startsWith('Artifact #');
-  const isWebhooks = currentTitle === 'Webhook Inbox' || currentTitle.startsWith('Webhook #');
-  const isFactoryCallbacks = currentTitle === 'Factory Callbacks' || currentTitle.startsWith('Factory Callback #');
-  const isShopifyUpdateTasks = currentTitle === 'Shopify Update Tasks' || currentTitle.startsWith('Shopify Update Task #');
+  const sections = [
+    ['Overview', [['Overview', '/admin', currentTitle === 'Wandini Orchestrator'], ['Orders', '/admin/orders', currentTitle === 'Orders' || currentTitle.startsWith('Order #')]]],
+    ['Diagnostics', [
+      ['Jobs', '/admin/jobs', currentTitle === 'Jobs' || currentTitle.startsWith('Job #')],
+      ['Webhooks', '/admin/webhooks', currentTitle === 'Webhook Inbox' || currentTitle.startsWith('Webhook #')],
+      ['Factory callbacks', '/admin/factory-callbacks', currentTitle === 'Factory Callbacks' || currentTitle.startsWith('Factory Callback #')],
+      ['Artifacts', '/admin/artifacts', currentTitle === 'Artifacts' || currentTitle.startsWith('Artifact #')],
+      ['Shopify update tasks', '/admin/shopify-update-tasks', currentTitle === 'Shopify Update Tasks' || currentTitle.startsWith('Shopify Update Task #')],
+    ]],
+  ];
 %>
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title><%= currentTitle %> | Wandini Orchestrator</title>
-    <link rel="stylesheet" href="/css/app.css">
-  </head>
-  <body>
-    <div class="admin-shell">
-      <aside class="admin-sidebar">
-        <a class="brand" href="/admin">
-          <span class="brand-mark" aria-hidden="true">W</span>
-          <span class="brand-copy">
-            <strong>Wandini</strong>
-            <small>Orchestrator</small>
-          </span>
-        </a>
-
-        <nav class="admin-nav" aria-label="Admin navigation">
-          <p class="nav-label">Workspace</p>
-          <a class="admin-nav-link<%= isOverview ? ' is-active' : '' %>" href="/admin">
-            <span class="nav-indicator" aria-hidden="true"></span>
-            Overview
-          </a>
-          <a class="admin-nav-link<%= isOrders ? ' is-active' : '' %>" href="/admin/orders">
-            <span class="nav-indicator" aria-hidden="true"></span>
-            Orders
-          </a>
-          <a class="admin-nav-link<%= isJobs ? ' is-active' : '' %>" href="/admin/jobs">
-            <span class="nav-indicator" aria-hidden="true"></span>
-            Jobs
-          </a>
-          <a class="admin-nav-link<%= isArtifacts ? ' is-active' : '' %>" href="/admin/artifacts">
-            <span class="nav-indicator" aria-hidden="true"></span>
-            Artifacts
-          </a>
-          <a class="admin-nav-link<%= isWebhooks ? ' is-active' : '' %>" href="/admin/webhooks">
-            <span class="nav-indicator" aria-hidden="true"></span>
-            Webhooks
-          </a>
-          <a class="admin-nav-link<%= isFactoryCallbacks ? ' is-active' : '' %>" href="/admin/factory-callbacks">
-            <span class="nav-indicator" aria-hidden="true"></span>
-            Factory callbacks
-          </a>
-          <a class="admin-nav-link<%= isShopifyUpdateTasks ? ' is-active' : '' %>" href="/admin/shopify-update-tasks">
-            <span class="nav-indicator" aria-hidden="true"></span>
-            Shopify update tasks
-          </a>
-        </nav>
-
-        <div class="sidebar-footer">
-          <span>
-            <strong>Internal console</strong>
-            <small>Local environment</small>
-          </span>
-          <form method="post" action="/admin/logout">
-            <button class="button button-secondary button-small" type="submit">Logout</button>
-          </form>
-        </div>
-      </aside>
-
-      <div class="admin-main">
-        <header class="admin-header">
-          <div>
-            <p class="header-kicker">Production console</p>
-            <p class="header-title">Wandini Orchestrator</p>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><%= currentTitle %> | Wandini Orchestrator</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <div class="admin-shell">
+    <aside class="admin-sidebar">
+      <a class="brand" href="/admin"><strong>Wandini</strong><span>Orchestrator</span><small>Internal monitoring</small></a>
+      <nav class="admin-nav" aria-label="Admin navigation">
+        <% sections.forEach(([label, links]) => { %>
+          <div class="nav-group"><p class="nav-label"><%= label %></p>
+          <% links.forEach(([label, href, active]) => { %>
+            <a class="admin-nav-link<%= active ? ' is-active' : '' %>" href="<%= href %>" <%- active ? 'aria-current="page"' : '' %>><%= label %></a>
+          <% }) %>
           </div>
-          <span class="environment-badge">Local Console</span>
-        </header>
-
-        <main class="admin-content">
-          <div class="page-container">
-            <%- body %>
-          </div>
-        </main>
+        <% }) %>
+      </nav>
+      <div class="sidebar-footer">
+        <small>Read-only monitoring</small>
+        <form method="post" action="/admin/logout"><button class="logout-button" type="submit">Log out</button></form>
       </div>
+    </aside>
+    <div class="admin-main">
+      <header class="admin-header"><span>Operations / <%= currentTitle === 'Wandini Orchestrator' ? 'Overview' : currentTitle %></span><span class="muted">Europe/Berlin</span></header>
+      <main id="main-content" class="admin-content"><div class="page-container"><%- body %></div></main>
     </div>
-  </body>
+  </div>
+</body>
 </html>

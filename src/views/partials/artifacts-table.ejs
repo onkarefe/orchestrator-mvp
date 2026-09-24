@@ -1,0 +1,33 @@
+<div class="table-scroll" tabindex="0" role="region" aria-label="Artifacts">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th scope="col">Artifact</th>
+        <th scope="col">Order / Job</th>
+        <th scope="col">Type / File</th>
+        <th scope="col">Validation</th>
+        <th scope="col">Status</th>
+        <th scope="col" class="table-date">Created</th>
+        <th scope="col" class="table-action">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if (!artifacts.length) { %>
+      <tr>
+        <td class="empty-state" colspan="7">No artifacts recorded.</td>
+      </tr>
+      <% } %>
+      <% artifacts.forEach((artifact) => { %>
+      <tr>
+        <td><a class="primary-link" href="/admin/artifacts/<%= artifact.id %>">#<%= artifact.id %></a></td>
+        <td><% if (artifact.order_id) { %><a class="primary-link" href="/admin/orders/<%= artifact.order_id %>">#<%= artifact.order_id %></a><% } else { %>&mdash;<% } %><span class="cell-meta">Job <% if (artifact.job_id) { %><a class="primary-link" href="/admin/jobs/<%= artifact.job_id %>">#<%= artifact.job_id %></a><% } else { %>&mdash;<% } %></span></td>
+        <td><%= admin.display(artifact.type) %><span class="cell-meta"><%= admin.display(artifact.file_name) %></span></td>
+        <td><span class="status-badge <%= admin.statusClass(artifact.validation_status) %>"><%= admin.statusLabel(artifact.validation_status) %></span></td>
+        <td><span class="status-badge <%= admin.statusClass(artifact.status) %>"><%= admin.statusLabel(artifact.status) %></span></td>
+        <td class="table-date"><%= admin.date(artifact.created_at) %></td>
+        <td class="table-action"><a class="button button-secondary button-small" aria-label="Inspect artifacts record <%= artifact.id %>" href="/admin/artifacts/<%= artifact.id %>">Open</a></td>
+      </tr>
+      <% }) %>
+    </tbody>
+  </table>
+</div>

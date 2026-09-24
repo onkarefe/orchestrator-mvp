@@ -1,89 +1,13 @@
-<%
-  const display = (value) =>
-    value === null || value === undefined || value === '' ? '-' : value;
-  const statusClass = (value) =>
-    `status-${String(value || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-%>
 <section class="page">
   <header class="page-header">
     <div>
-      <p class="eyebrow">Output</p>
-      <h1>Artifacts</h1>
-      <p class="page-description">Recent generated files, manifests, and checksum records.</p>
+      <p class="eyebrow">Diagnostics</p><h1>Artifacts</h1><p class="page-description">Generated output and validation records.</p>
     </div>
   </header>
-
   <section class="table-card">
     <div class="table-card-header">
-      <div>
-        <h2>Artifact records</h2>
-        <p class="muted"><%= artifacts.length %> recent artifact<%= artifacts.length === 1 ? '' : 's' %></p>
-      </div>
+      <h2>Artifacts</h2><p class="muted"><%= artifacts.length %> most recent records</p>
     </div>
-
-    <div class="table-scroll">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th scope="col">ID</th>
-            <th scope="col">Order</th>
-            <th scope="col">Job</th>
-            <th scope="col">Type</th>
-            <th scope="col">File</th>
-            <th scope="col">Manifest</th>
-            <th scope="col">Checksum</th>
-            <th scope="col">Counts</th>
-            <th scope="col">Validation</th>
-            <th scope="col">Status</th>
-            <th scope="col">Created</th>
-            <th scope="col" class="table-action">Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          <% if (artifacts.length === 0) { %>
-            <tr>
-              <td class="empty-state" colspan="12">No artifacts recorded yet.</td>
-            </tr>
-          <% } %>
-
-          <% artifacts.forEach((artifact) => { %>
-            <tr>
-              <td class="mono">#<%= artifact.id %></td>
-              <td class="mono">
-                <% if (artifact.order_id) { %>
-                  <a class="secondary-link mono" href="/admin/orders/<%= artifact.order_id %>">#<%= artifact.order_id %></a>
-                <% } else { %>
-                  -
-                <% } %>
-              </td>
-              <td class="mono">
-                <% if (artifact.job_id) { %>
-                  <a class="secondary-link mono" href="/admin/jobs/<%= artifact.job_id %>">#<%= artifact.job_id %></a>
-                <% } else { %>
-                  -
-                <% } %>
-              </td>
-              <td class="mono"><%= display(artifact.type) %></td>
-              <td>
-                <span class="cell-title"><%= display(artifact.file_name) %></span>
-                <span class="cell-meta"><%= display(artifact.file_path) %></span>
-              </td>
-              <td class="mono"><%= display(artifact.manifest_path) %></td>
-              <td class="mono"><%= display(artifact.checksum) %></td>
-              <td>
-                <span class="cell-title">Files <%= display(artifact.file_count) %></span>
-                <span class="cell-meta">Bytes <%= display(artifact.total_size_bytes) %> / <%= display(artifact.file_size) %></span>
-              </td>
-              <td><span class="status-badge <%= statusClass(artifact.validation_status) %>"><%= display(artifact.validation_status) %></span></td>
-              <td><span class="status-badge <%= statusClass(artifact.status) %>"><%= display(artifact.status) %></span></td>
-              <td class="table-date"><%= display(artifact.created_at) %></td>
-              <td class="table-action">
-                <a class="button button-secondary button-small" href="/admin/artifacts/<%= artifact.id %>">Open</a>
-              </td>
-            </tr>
-          <% }) %>
-        </tbody>
-      </table>
-    </div>
+    <%- include('../partials/artifacts-table', { artifacts }) %>
   </section>
 </section>

@@ -1,0 +1,32 @@
+<section class="table-card">
+  <div class="table-card-header">
+    <h2>Activity log</h2><span class="muted"><%= logs.length %> events</span>
+  </div>
+  <div class="table-scroll" tabindex="0" role="region" aria-label="Activity log">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th scope="col">Level</th>
+          <th scope="col">Step</th>
+          <th scope="col">Message</th>
+          <th scope="col" class="table-date">Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% logs.forEach(log => { %>
+        <tr>
+          <td><span class="status-badge <%= admin.statusClass(log.level) %>"><%= admin.statusLabel(log.level) %></span></td>
+          <td class="mono"><%= admin.display(log.step) %></td>
+          <td><%= admin.display(log.message) %></td>
+          <td class="table-date"><%= admin.date(log.created_at) %></td>
+        </tr>
+        <% }) %>
+        <% if (!logs.length) { %>
+        <tr>
+          <td colspan="4" class="empty-state">No activity recorded.</td>
+        </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</section>

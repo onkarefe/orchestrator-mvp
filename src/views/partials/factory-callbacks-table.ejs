@@ -1,0 +1,33 @@
+<div class="table-scroll" tabindex="0" role="region" aria-label="Factory callbacks">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th scope="col">Callback</th>
+        <th scope="col">Order / Reference</th>
+        <th scope="col">Factory status</th>
+        <th scope="col">Tracking</th>
+        <th scope="col">Auth / Processing</th>
+        <th scope="col" class="table-date">Received</th>
+        <th scope="col" class="table-action">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if (!factoryCallbacks.length) { %>
+      <tr>
+        <td class="empty-state" colspan="7">No factory callbacks recorded.</td>
+      </tr>
+      <% } %>
+      <% factoryCallbacks.forEach((callback) => { %>
+      <tr>
+        <td><a class="primary-link" href="/admin/factory-callbacks/<%= callback.id %>">#<%= callback.id %></a></td>
+        <td><% if (callback.order_id) { %><a class="primary-link" href="/admin/orders/<%= callback.order_id %>">#<%= callback.order_id %></a><% } else { %>&mdash;<% } %><span class="cell-meta"><%= admin.display(callback.factory_reference) %></span></td>
+        <td><span class="status-badge <%= admin.statusClass(callback.status) %>"><%= admin.statusLabel(callback.status) %></span></td>
+        <td><%= admin.display(callback.tracking_count) %><span class="cell-meta">tracking records</span></td>
+        <td><span class="status-badge <%= admin.statusClass(admin.booleanLabel(callback.auth_valid)) %>"><%= admin.statusLabel(admin.booleanLabel(callback.auth_valid)) %></span><span class="cell-meta"><span class="status-badge <%= admin.statusClass(callback.processing_status) %>"><%= admin.statusLabel(callback.processing_status) %></span></span><span class="cell-indicators"><% if (callback.manual_review_reason) { %><span class="status-badge status-warning">Review required</span><% } %><% if (callback.error_message) { %><span class="status-badge status-critical">Error recorded</span><% } %></span></td>
+        <td class="table-date"><%= admin.date(callback.received_at || callback.created_at) %></td>
+        <td class="table-action"><a class="button button-secondary button-small" aria-label="Inspect factory-callbacks record <%= callback.id %>" href="/admin/factory-callbacks/<%= callback.id %>">Open</a></td>
+      </tr>
+      <% }) %>
+    </tbody>
+  </table>
+</div>

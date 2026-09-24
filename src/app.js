@@ -1,4 +1,5 @@
 import express from 'express';
+import adminDisplay from './utils/adminDisplay.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,6 +14,7 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
 
 const app = express();
+app.locals.admin = adminDisplay;
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));

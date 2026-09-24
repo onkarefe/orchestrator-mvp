@@ -1,94 +1,13 @@
-<%
-  const display = (value) =>
-    value === null || value === undefined || value === '' ? '\u2014' : value;
-  const statusClass = (value) =>
-    `status-${String(value || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-%>
 <section class="page">
   <header class="page-header">
     <div>
-      <p class="eyebrow">Operations</p>
-      <h1>Jobs</h1>
-      <p class="page-description">Production work generated from configurator line items.</p>
+      <p class="eyebrow">Diagnostics</p><h1>Jobs</h1><p class="page-description">Production work generated from configurator line items.</p>
     </div>
   </header>
-
   <section class="table-card">
     <div class="table-card-header">
-      <div>
-        <h2>Processing queue</h2>
-        <p class="muted"><%= jobs.length %> recent job<%= jobs.length === 1 ? '' : 's' %></p>
-      </div>
+      <h2>Jobs</h2><p class="muted"><%= jobs.length %> most recent records</p>
     </div>
-
-    <div class="table-scroll">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th scope="col">Job</th>
-            <th scope="col">Order</th>
-            <th scope="col">Line item</th>
-            <th scope="col">Status</th>
-            <th scope="col">Attempts</th>
-            <th scope="col">Locked</th>
-            <th scope="col">Manual review</th>
-            <th scope="col">Last error</th>
-            <th scope="col">Factory upload</th>
-            <th scope="col">Manifest</th>
-            <th scope="col">Created</th>
-            <th scope="col">Started</th>
-            <th scope="col">Completed</th>
-            <th scope="col" class="table-action">Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          <% if (jobs.length === 0) { %>
-            <tr>
-              <td class="empty-state" colspan="14">No jobs recorded yet.</td>
-            </tr>
-          <% } %>
-
-          <% jobs.forEach((job) => { %>
-            <tr>
-              <td>
-                <a class="primary-link mono" href="/admin/jobs/<%= job.id %>">#<%= job.id %></a>
-                <span class="cell-meta">Line item <%= display(job.shopify_line_item_id) %></span>
-              </td>
-              <td>
-                <% if (job.order_id) { %>
-                  <a class="secondary-link mono" href="/admin/orders/<%= job.order_id %>">#<%= job.order_id %></a>
-                <% } else { %>
-                  &mdash;
-                <% } %>
-              </td>
-              <td class="mono"><%= display(job.shopify_line_item_id) %></td>
-              <td><span class="status-badge <%= statusClass(job.status) %>"><%= display(job.status) %></span></td>
-              <td><%= display(job.attempt_count) %> / <%= display(job.max_attempts) %></td>
-              <td>
-                <span class="cell-title"><%= display(job.locked_at) %></span>
-                <span class="cell-meta"><%= display(job.locked_by) %></span>
-              </td>
-              <td><%= display(job.manual_review_reason) %></td>
-              <td><%= display(job.last_error) %></td>
-              <td>
-                <% if (job.factory_upload) { %>
-                  <span class="status-badge <%= statusClass(job.factory_upload.status) %>"><%= display(job.factory_upload.status) %></span>
-                  <span class="cell-meta"><%= job.factory_upload.status === 'pending' ? 'Waiting for FTP readiness' : display(job.factory_upload.uploaded_at || job.factory_upload.suppressed_reason || job.factory_upload.last_error) %></span>
-                <% } else { %>
-                  &mdash;
-                <% } %>
-              </td>
-              <td class="mono"><%= display(job.artifact_manifest_path) %></td>
-              <td class="table-date"><%= display(job.created_at) %></td>
-              <td class="table-date"><%= display(job.started_at) %></td>
-              <td class="table-date"><%= display(job.completed_at) %></td>
-              <td class="table-action">
-                <a class="button button-secondary button-small" href="/admin/jobs/<%= job.id %>">Open</a>
-              </td>
-            </tr>
-          <% }) %>
-        </tbody>
-      </table>
-    </div>
+    <%- include('../partials/jobs-table', { jobs }) %>
   </section>
 </section>

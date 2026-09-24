@@ -1,0 +1,35 @@
+<div class="table-scroll" tabindex="0" role="region" aria-label="Jobs">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th scope="col">Job</th>
+        <th scope="col">Order</th>
+        <th scope="col">Product / SKU</th>
+        <th scope="col">Dimensions</th>
+        <th scope="col">Status</th>
+        <th scope="col">Attempts</th>
+        <th scope="col" class="table-date">Created</th>
+        <th scope="col" class="table-action">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if (!jobs.length) { %>
+      <tr>
+        <td class="empty-state" colspan="8">No jobs recorded.</td>
+      </tr>
+      <% } %>
+      <% jobs.forEach((job) => { %>
+      <tr>
+        <td><a class="primary-link" href="/admin/jobs/<%= job.id %>">#<%= job.id %></a></td>
+        <td><% if (job.order_id) { %><a class="primary-link" href="/admin/orders/<%= job.order_id %>">#<%= job.order_id %></a><% } else { %>&mdash;<% } %></td>
+        <td><%= admin.display(job.product_title) %><span class="cell-meta"><%= admin.display(job.sku) %></span></td>
+        <td><%= admin.display(job.width_mm) %> &times; <%= admin.display(job.height_mm) %><span class="cell-meta">mm</span></td>
+        <td><span class="status-badge <%= admin.statusClass(job.status) %>"><%= admin.statusLabel(job.status) %></span><span class="cell-indicators"><% if (job.manual_review_reason) { %><span class="status-badge status-warning">Review required</span><% } %><% if (job.last_error) { %><span class="status-badge status-critical">Error recorded</span><% } %></span><% if (['failed', 'manual_review'].includes(job.factory_upload?.status)) { %><span class="cell-meta">Factory upload needs attention</span><% } %></td>
+        <td><%= admin.display(job.attempt_count) %> / <%= admin.display(job.max_attempts) %></td>
+        <td class="table-date"><%= admin.date(job.created_at) %></td>
+        <td class="table-action"><a class="button button-secondary button-small" aria-label="Inspect jobs record <%= job.id %>" href="/admin/jobs/<%= job.id %>">Open</a></td>
+      </tr>
+      <% }) %>
+    </tbody>
+  </table>
+</div>

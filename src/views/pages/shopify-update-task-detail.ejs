@@ -1,130 +1,108 @@
-<%
-  const display = (value) =>
-    value === null || value === undefined || value === '' ? '-' : value;
-  const statusClass = (value) =>
-    `status-${String(value || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-  const dryRunLabel = (value) => value ? 'Dry-run' : 'Live candidate';
-  const writeBlockReason =
-    shopifyUpdateTask.result_json?.externalWriteBlockedReason ||
-    shopifyUpdateTask.result_json?.writeSuppressedReason ||
-    shopifyUpdateTask.payload_json?.writeSuppressedReason ||
-    '-';
-%>
+<% const task = shopifyUpdateTask; const writeBlockReason = task.result_json?.externalWriteBlockedReason || task.result_json?.writeSuppressedReason || task.payload_json?.writeSuppressedReason; %>
 <section class="page">
-  <header class="page-header page-header-with-actions">
+  <header class="page-header">
     <div>
-      <a class="back-link" href="/admin/shopify-update-tasks">Back to Shopify update tasks</a>
-      <p class="eyebrow">Shopify update task detail</p>
-      <h1>Shopify Update Task #<%= shopifyUpdateTask.id %></h1>
-      <p class="page-description"><%= display(shopifyUpdateTask.task_type) %></p>
+      <a class="back-link" href="/admin/shopify-update-tasks">Back to shopify update tasks</a><p class="eyebrow">Shopify Update Task detail</p><h1>Shopify Update Task #<%= task.id %></h1><p class="page-description"><%= admin.display(task.task_type) %></p>
     </div>
-    <span class="status-badge status-badge-large <%= statusClass(shopifyUpdateTask.status) %>">
-      <%= display(shopifyUpdateTask.status) %>
-    </span>
+    <span class="status-badge <%= admin.statusClass(task.status) %>"><%= admin.statusLabel(task.status) %></span>
   </header>
-
   <section class="card">
     <div class="card-header">
-      <div>
-        <p class="section-label">Executor task</p>
-        <h2>Update summary</h2>
-      </div>
+      <h2>Executor outcome</h2>
     </div>
     <dl class="meta-grid meta-grid-three">
       <div class="meta-item">
-        <dt>Order ID</dt>
-        <dd class="mono"><%= display(shopifyUpdateTask.order_id) %></dd>
+        <dt>Order</dt>
+        <dd><% if (task.order_id) { %><a href="/admin/orders/<%= task.order_id %>">#<%= task.order_id %></a><% } else { %>&mdash;<% } %></dd>
       </div>
       <div class="meta-item">
         <dt>Shopify order ID</dt>
-        <dd class="mono"><%= display(shopifyUpdateTask.shopify_order_id) %></dd>
-      </div>
-      <div class="meta-item">
-        <dt>Task type</dt>
-        <dd class="mono"><%= display(shopifyUpdateTask.task_type) %></dd>
-      </div>
-      <div class="meta-item">
-        <dt>Idempotency key</dt>
-        <dd class="mono"><%= display(shopifyUpdateTask.idempotency_key) %></dd>
-      </div>
-      <div class="meta-item">
-        <dt>Source</dt>
-        <dd class="mono"><%= display(shopifyUpdateTask.source_type) %> / <%= display(shopifyUpdateTask.source_id) %></dd>
-      </div>
-      <div class="meta-item">
-        <dt>Status</dt>
-        <dd><span class="status-badge <%= statusClass(shopifyUpdateTask.status) %>"><%= display(shopifyUpdateTask.status) %></span></dd>
-      </div>
-      <div class="meta-item">
-        <dt>Dry-run</dt>
-        <dd><span class="status-badge status-neutral"><%= dryRunLabel(shopifyUpdateTask.dry_run) %></span></dd>
+        <dd class="mono"><%= admin.display(task.shopify_order_id) %></dd>
       </div>
       <div class="meta-item">
         <dt>Attempts</dt>
-        <dd><%= display(shopifyUpdateTask.attempt_count) %> / <%= display(shopifyUpdateTask.max_attempts) %></dd>
+        <dd><%= admin.display(task.attempt_count) %></dd>
       </div>
       <div class="meta-item">
-        <dt>Last error</dt>
-        <dd><%= display(shopifyUpdateTask.last_error) %></dd>
-      </div>
-      <div class="meta-item">
-        <dt>External write block</dt>
-        <dd class="mono"><%= display(writeBlockReason) %></dd>
+        <dt>Maximum attempts</dt>
+        <dd><%= admin.display(task.max_attempts) %></dd>
       </div>
       <div class="meta-item">
         <dt>External ID</dt>
-        <dd class="mono"><%= display(shopifyUpdateTask.external_id) %></dd>
+        <dd class="mono"><%= admin.display(task.external_id) %></dd>
       </div>
       <div class="meta-item">
-        <dt>Locked by</dt>
-        <dd class="mono"><%= display(shopifyUpdateTask.locked_by) %></dd>
+        <dt>Execution mode</dt>
+        <dd><%= task.dry_run === null || task.dry_run === undefined ? 'Not recorded' : Number(task.dry_run) ? 'Dry-run' : 'Live' %></dd>
       </div>
       <div class="meta-item">
-        <dt>Locked at</dt>
-        <dd><%= display(shopifyUpdateTask.locked_at) %></dd>
+        <dt>External write block</dt>
+        <dd class="mono"><%= admin.display(writeBlockReason) %></dd>
       </div>
       <div class="meta-item">
-        <dt>Processed</dt>
-        <dd><%= display(shopifyUpdateTask.processed_at) %></dd>
-      </div>
-      <div class="meta-item">
-        <dt>Completed</dt>
-        <dd><%= display(shopifyUpdateTask.completed_at) %></dd>
-      </div>
-      <div class="meta-item">
-        <dt>Skipped</dt>
-        <dd><%= display(shopifyUpdateTask.skipped_at) %></dd>
-      </div>
-      <div class="meta-item">
-        <dt>Failed / manual review</dt>
-        <dd><%= display(shopifyUpdateTask.failed_at) %></dd>
-      </div>
-      <div class="meta-item">
-        <dt>Created</dt>
-        <dd><%= display(shopifyUpdateTask.created_at) %></dd>
+        <dt>Last error</dt>
+        <dd><%= admin.display(task.last_error) %></dd>
       </div>
     </dl>
   </section>
-
+  <section class="card">
+    <div class="card-header">
+      <h2>Timeline</h2>
+    </div>
+    <dl class="meta-grid meta-grid-three">
+      <div class="meta-item">
+        <dt>Created</dt>
+        <dd><%= admin.date(task.created_at) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Processed</dt>
+        <dd><%= admin.date(task.processed_at) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Completed</dt>
+        <dd><%= admin.date(task.completed_at) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Skipped</dt>
+        <dd><%= admin.date(task.skipped_at) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Failed / manual review</dt>
+        <dd><%= admin.date(task.failed_at) %></dd>
+      </div>
+    </dl>
+  </section>
+  <section class="card">
+    <div class="card-header">
+      <h2>Task diagnostics</h2>
+    </div>
+    <dl class="meta-grid meta-grid-three">
+      <div class="meta-item">
+        <dt>Idempotency key</dt>
+        <dd class="mono"><%= admin.display(task.idempotency_key) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Source type</dt>
+        <dd><%= admin.display(task.source_type) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Source ID</dt>
+        <dd class="mono"><%= admin.display(task.source_id) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Locked by</dt>
+        <dd class="mono"><%= admin.display(task.locked_by) %></dd>
+      </div>
+      <div class="meta-item">
+        <dt>Locked at</dt>
+        <dd><%= admin.date(task.locked_at) %></dd>
+      </div>
+    </dl>
+  </section>
   <details class="card disclosure">
-    <summary>
-      <span>
-        <span class="section-label">Technical data</span>
-        <strong>Redacted task payload</strong>
-      </span>
-      <span class="disclosure-hint">Show payload</span>
-    </summary>
-    <pre class="code-panel"><%= payloadJson || '{}' %></pre>
+    <summary><strong>Redacted task payload</strong></summary><pre class="code-panel"><%= admin.json(payloadJson || {}) %></pre>
   </details>
-
   <details class="card disclosure">
-    <summary>
-      <span>
-        <span class="section-label">Executor data</span>
-        <strong>Redacted result payload</strong>
-      </span>
-      <span class="disclosure-hint">Show result</span>
-    </summary>
-    <pre class="code-panel"><%= resultJson || '{}' %></pre>
+    <summary><strong>Redacted result</strong></summary><pre class="code-panel"><%= admin.json(resultJson || {}) %></pre>
   </details>
 </section>
