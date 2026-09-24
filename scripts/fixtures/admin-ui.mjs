@@ -17,8 +17,8 @@ export function fixtureRows(mode = 'normal') {
   const rows = {
     orders: [{ ...common, shopify_order_number: '#1042', customer_name: 'Sample Customer',
       customer_email: 'customer@example.test', financial_status: 'paid', factory_status: 'shipped',
-      factory_order_id: 'NEXO-1042', checkout_security_json: { result: 'PASS', mode: 'enforce',
-        reason: null, detectedAt: at.toISOString(), sourceName: 'note_attributes', proofDigest: 'DIGEST_MUST_NOT_RENDER' } },
+      factory_order_id: 'NEXO-1042', checkout_proof_digest: 'DIGEST_MUST_NOT_RENDER', checkout_security_json: { result: 'PASS', mode: 'enforce',
+        reason: null, detectedAt: at.toISOString(), sourceName: 'note_attributes' } },
       { ...common, id: 2, shopify_order_number: '#1043', status: 'SECURITY_HOLD',
         checkout_security_json: { result: 'FAIL', mode: 'enforce', reason: 'CHECKOUT_PROOF_MISSING', detectedAt: at.toISOString() } }],
     jobs: [{ ...common, product_title: 'Forest wallpaper', sku: '20-140.1-3', width_mm: 2400, height_mm: 2600,

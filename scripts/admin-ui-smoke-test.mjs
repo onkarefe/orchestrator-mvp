@@ -23,6 +23,20 @@ assert.equal(admin.booleanLabel(null), 'Not checked');
 assert.equal(checkoutSecurity({ status: 'SECURITY_HOLD', checkout_security_json: '{bad' }).held, true);
 assert.equal(checkoutSecurity({ checkout_security_json: '{"result":"NOT_APPLICABLE"}' }).result, 'N/A');
 assert.equal(checkoutSecurity({}).result, 'Not checked');
+const persistedPass = fixtureRows().orders[0];
+assert.equal(Object.hasOwn(persistedPass.checkout_security_json, 'proofDigest'), false);
+const presentedPass = checkoutSecurity(persistedPass);
+assert.equal(presentedPass.result, 'PASS');
+assert.equal(presentedPass.mode, 'enforce');
+assert.equal(presentedPass.proofDigest, 'PRESENT');
+assert.ok(!JSON.stringify(presentedPass).includes(persistedPass.checkout_proof_digest));
+for (const missing of [undefined, null, '']) {
+  assert.equal(checkoutSecurity({ ...persistedPass, checkout_proof_digest: missing }).proofDigest, 'MISSING');
+}
+assert.equal(checkoutSecurity({
+  checkout_security_json: { result: 'PASS', mode: 'enforce', proofDigest: 'legacy-json-digest' },
+}).proofDigest, 'MISSING');
+assert.equal(checkoutSecurity(fixtureRows().orders[1]).held, true);
 const payload = { note_attributes: [{ name: 'wandini_checkout_proof', value: 'proof-value' }],
   signature: 'signature-value', secret: 'secret-value', visible: 'safe' };
 const serialized = adminJson(payload);
@@ -59,8 +73,11 @@ try {
   const hold = await (await fetch(fixture.url + '/admin/orders/2', { headers })).text();
   assert.match(hold, /SECURITY_HOLD/); assert.match(hold, /Factory processing is blocked/);
   assert.match(hold, /CHECKOUT_PROOF_MISSING/);
+  assert.match(hold, /<dt>Proof digest<\/dt>\s*<dd>MISSING<\/dd>/);
   const pass = await (await fetch(fixture.url + '/admin/orders/1', { headers })).text();
-  assert.match(pass, /PASS/); assert.match(pass, /enforce/); assert.match(pass, /PRESENT/);
+  assert.match(pass, /PASS/); assert.match(pass, /enforce/);
+  assert.match(pass, /<dt>Proof digest<\/dt>\s*<dd>PRESENT<\/dd>/);
+  assert.ok(!pass.includes(persistedPass.checkout_proof_digest));
   assert.ok(!pass.includes('Factory processing is blocked'));
   for (const slug of lists) assert.equal((await fetch(fixture.url + '/admin/' + slug + '/999', { headers })).status, 404);
   assert.ok(fixture.queries.every(sql => /^SELECT\s/i.test(sql.trim())));

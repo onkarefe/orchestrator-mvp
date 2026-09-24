@@ -36,7 +36,7 @@ export function checkoutSecurity(order = {}) {
   return {
     result: security.result === 'NOT_APPLICABLE' ? 'N/A' : security.result || 'Not checked',
     mode: security.mode, reason: security.reason, detectedAt: security.detectedAt,
-    sourceName: security.sourceName, proofDigest: security.proofDigest ? 'PRESENT' : 'MISSING',
+    sourceName: security.sourceName, proofDigest: order.checkout_proof_digest ? 'PRESENT' : 'MISSING',
     held: order.status === 'SECURITY_HOLD',
   };
 }
