@@ -1,6 +1,7 @@
 import { LINE_ITEM_CLASSIFICATIONS } from '../constants/lineItemRouting.js';
 import { buildOrderFactoryIdentity } from './factoryFileNames.js';
 import { validateShopifyShippingAddress } from '../services/PreflightValidationService.js';
+import { resolveFactoryFinancialData } from '../services/FactoryFinancialDataService.js';
 
 export function xmlEscape(value) {
   if (value === null || value === undefined) {
@@ -119,6 +120,34 @@ function getGeneratedPanels(panelFiles) {
   return panels;
 }
 
+// Identity is the pair (Shopify line ID, source position), never the SKU or
+// the caller's array order. Return a new array in Shopify's original order.
+export function matchFactoryFinancialPositions(positions, financialData) {
+  const invalid = () => {
+    const error = new Error('factory_financial_position_mismatch');
+    error.code = 'factory_financial_position_mismatch';
+    throw error;
+  };
+  if (!Array.isArray(positions) || positions.length !== financialData.positions.length) invalid();
+  const byIdentity = new Map();
+  for (const position of positions) {
+    const id = position?.shopifyLineItemId;
+    if ((typeof id !== 'string' || !/^[1-9]\d*$/.test(id)) &&
+        (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0)) invalid();
+    if (!Number.isSafeInteger(position.sourcePosition) || position.sourcePosition < 0 ||
+        ![LINE_ITEM_CLASSIFICATIONS.WALLPAPER, LINE_ITEM_CLASSIFICATIONS.ACCESSORY].includes(position.classification)) invalid();
+    const key = `${id}:${position.sourcePosition}`;
+    if (byIdentity.has(key)) invalid();
+    byIdentity.set(key, position);
+  }
+  return financialData.positions.map(financial => {
+    const position = byIdentity.get(`${financial.shopifyLineItemId}:${financial.sourcePosition}`);
+    if (!position || position.sku !== financial.sku || position.quantity !== financial.quantity ||
+        (position.classification === LINE_ITEM_CLASSIFICATIONS.WALLPAPER && position.quantity !== 1)) invalid();
+    return { ...position, totalPrice: financial.totalPrice };
+  });
+}
+
 function buildPositionXml(position, index) {
   const sku = normalizeText(position?.sku);
   if (!sku) {
@@ -126,23 +155,27 @@ function buildPositionXml(position, index) {
   }
 
   if (position?.classification === LINE_ITEM_CLASSIFICATIONS.ACCESSORY) {
-    const quantity = position.quantity ?? 1;
+    const quantity = position.quantity;
     if (!Number.isSafeInteger(quantity) || quantity <= 0) {
       throw new Error('Accessory quantity must be a positive integer');
     }
     if (
-      position.panelFiles !== undefined &&
-      (!Array.isArray(position.panelFiles) || position.panelFiles.length !== 0)
+      !Array.isArray(position.panelFiles) || position.panelFiles.length !== 0
     ) {
       throw new Error('Accessory positions must not contain panel files');
     }
-    return Array.from({ length: quantity }, () => `    <position>
+    return `    <position>
       <sku>${xmlEscape(sku)}</sku>
-    </position>`).join('\n');
+      <width unit="mm">0</width>
+      <height unit="mm">0</height>
+      <variants>1</variants>
+      <copies_per_variant>${quantity}</copies_per_variant>
+      <total_price>${xmlEscape(position.totalPrice)}</total_price>
+      <files/>
+    </position>`;
   }
 
   if (
-    position?.classification &&
     position.classification !== LINE_ITEM_CLASSIFICATIONS.WALLPAPER
   ) {
     throw new Error('Unknown factory position classification');
@@ -162,6 +195,7 @@ function buildPositionXml(position, index) {
       <height unit="mm">${xmlEscape(formatMm(firstPanel.heightMm))}</height>
       <variants>${xmlEscape(panels.length)}</variants>
       <copies_per_variant>1</copies_per_variant>
+      <total_price>${xmlEscape(position.totalPrice)}</total_price>
       <files>
 ${fileItems}
       </files>
@@ -192,7 +226,14 @@ export function buildOrderXml({ order, shopifyOrderId, positions }) {
   const orderNumber = buildOrderFactoryIdentity(shopifyOrderId);
   const shippingFrom = getShippingFrom();
   const shippingTo = getShippingTo(rawPayload);
-  const positionsXml = positions
+  const financialData = resolveFactoryFinancialData(order.raw_payload_json);
+  if (String(rawPayload.id) !== String(shopifyOrderId) ||
+      (order.shopify_order_id !== undefined && String(order.shopify_order_id) !== String(shopifyOrderId))) {
+    const error = new Error('factory_financial_order_identity_mismatch');
+    error.code = 'factory_financial_order_identity_mismatch';
+    throw error;
+  }
+  const positionsXml = matchFactoryFinancialPositions(positions, financialData)
     .map((position, index) => buildPositionXml(position, index))
     .join('\n');
 
@@ -201,6 +242,8 @@ export function buildOrderXml({ order, shopifyOrderId, positions }) {
   <order>
     <order_number>${xmlEscape(orderNumber)}</order_number>
     <shipping_type>Standard</shipping_type>
+    <shipping_costs>${xmlEscape(financialData.shippingCosts)}</shipping_costs>
+    <payment_method>${xmlEscape(financialData.paymentMethod)}</payment_method>
     <shipping_from>
       <company>${xmlEscape(shippingFrom.company)}</company>
       <contact_person>${xmlEscape(shippingFrom.contactPerson)}</contact_person>

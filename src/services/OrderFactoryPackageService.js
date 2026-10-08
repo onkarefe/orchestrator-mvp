@@ -178,6 +178,8 @@ export async function ensureOrderFactoryPackage({
         disposition: 'not_ready',
         created: false,
         reason: readiness.reason,
+        ...(readiness.reason === 'factory_financial_data_invalid'
+          ? { financialErrorCode: readiness.details.financialErrorCode } : {}),
         order,
         orderPackage: null,
         artifact: null,
@@ -191,6 +193,14 @@ export async function ensureOrderFactoryPackage({
         positions: readiness.positions,
       });
     } catch (error) {
+      const financialErrorCode = /^FINANCIAL_[A-Z_]+$/.test(error?.financialErrorCode ?? error?.code ?? '')
+        ? (error.financialErrorCode ?? error.code) : null;
+      const reason = financialErrorCode
+        ? 'factory_financial_data_invalid'
+        : /^order_factory_package_orphan_[a-z_]+$/.test(error?.message ?? '')
+          ? error.message
+          : ['factory_financial_position_mismatch', 'factory_financial_order_identity_mismatch'].includes(error?.code)
+            ? error.code : 'order_factory_package_assembly_failed';
       await connection.commit();
       transactionStarted = false;
       releaseConnection();
@@ -200,23 +210,16 @@ export async function ensureOrderFactoryPackage({
         step: 'factory_package.assembly_not_ready',
         message: 'Order-level factory package assembly was blocked safely',
         detailsJson: {
-          reason: String(error?.message ?? '').startsWith(
-            'order_factory_package_orphan_'
-          )
-            ? error.message
-            : 'order_factory_package_assembly_failed',
-          error: safeErrorForLog(error),
+          reason,
+          ...(financialErrorCode ? { financialErrorCode } : { error: safeErrorForLog(error) }),
         },
       });
 
       return {
         disposition: 'not_ready',
         created: false,
-        reason: String(error?.message ?? '').startsWith(
-          'order_factory_package_orphan_'
-        )
-          ? error.message
-          : 'order_factory_package_assembly_failed',
+        reason,
+        ...(financialErrorCode ? { financialErrorCode } : {}),
         order,
         orderPackage: null,
         artifact: null,

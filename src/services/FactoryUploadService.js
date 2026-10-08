@@ -159,6 +159,43 @@ function decodeXmlText(value) {
 }
 
 export function extractPdfFileNamesFromXml(xml) {
+  const text = String(xml ?? '');
+  const invalidPosition = () => {
+    throw new FactoryUploadSafetyError(
+      'xml_pdf_references_missing',
+      'Production XML does not reference any FTP PDF files for a valid wallpaper position, or has an invalid accessory position'
+    );
+  };
+  const containers = [...text.matchAll(/<positions>([\s\S]*?)<\/positions>/g)];
+  if (containers.length !== 1) invalidPosition();
+  const positionsBody = containers[0][1];
+  const positionPattern = /<position>([\s\S]*?)<\/position>/g;
+  const positions = [...positionsBody.matchAll(positionPattern)];
+  if (!positions.length || positionsBody.replace(positionPattern, '').trim() !== '' ||
+      /<file\b/i.test(text.replace(containers[0][0], ''))) invalidPosition();
+
+  for (const [, body] of positions) {
+    // Preserve the original SKU-only format for historical artifacts.
+    const legacy = body.match(/^\s*<sku>([^<]+)<\/sku>\s*$/);
+    if (legacy && decodeXmlText(legacy[1]).trim()) continue;
+
+    const structured = body.match(/^\s*<sku>([^<]+)<\/sku>\s*<width unit="mm">(\d+(?:\.\d+)?)<\/width>\s*<height unit="mm">(\d+(?:\.\d+)?)<\/height>\s*<variants>([1-9]\d*)<\/variants>\s*<copies_per_variant>([1-9]\d*)<\/copies_per_variant>\s*(?:<total_price>(\d+\.\d{2})<\/total_price>\s*)?(<files\/>|<files>[\s\S]*?<\/files>)\s*$/);
+    if (!structured || !decodeXmlText(structured[1]).trim()) invalidPosition();
+    const [, , width, height, variants, copies, totalPrice, files] = structured;
+    if (!Number.isSafeInteger(Number(variants)) || !Number.isSafeInteger(Number(copies))) invalidPosition();
+    if (width === '0' && height === '0') {
+      if (variants !== '1' || totalPrice === undefined || files !== '<files/>') invalidPosition();
+      continue;
+    }
+    // Each wallpaper must have its own complete PDF set, even in mixed orders.
+    if (!Number.isFinite(Number(width)) || Number(width) <= 0 ||
+        !Number.isFinite(Number(height)) || Number(height) <= 0 || copies !== '1') invalidPosition();
+    const fileBody = files.match(/^<files>([\s\S]*)<\/files>$/)?.[1];
+    const referencePattern = /<file type=(?:"ftp"|'ftp')>[^<]+<\/file>/g;
+    if (fileBody === undefined || [...fileBody.matchAll(referencePattern)].length !== Number(variants) ||
+        fileBody.replace(referencePattern, '').trim() !== '') invalidPosition();
+  }
+
   const fileNames = [];
   const seen = new Set();
   const filePattern = /<file\b([^>]*)>([\s\S]*?)<\/file>/gi;
@@ -190,23 +227,6 @@ export function extractPdfFileNamesFromXml(xml) {
 
     seen.add(fileName);
     fileNames.push(fileName);
-  }
-
-  // Zero PDFs are valid only for an explicitly SKU-only accessory order.
-  const positionsBody = String(xml ?? '').match(
-    /<positions>([\s\S]*?)<\/positions>/
-  )?.[1];
-  const skuOnlyPattern = /<position>\s*<sku>([^<]+)<\/sku>\s*<\/position>/g;
-  const accessoryPositions = [...(positionsBody ?? '').matchAll(skuOnlyPattern)];
-  const accessoryOnly =
-    accessoryPositions.length > 0 &&
-    positionsBody.replace(skuOnlyPattern, '').trim() === '' &&
-    accessoryPositions.every(([, sku]) => decodeXmlText(sku).trim().length > 0);
-  if (fileNames.length === 0 && !accessoryOnly) {
-    throw new FactoryUploadSafetyError(
-      'xml_pdf_references_missing',
-      'Production XML does not reference any FTP PDF files'
-    );
   }
 
   return fileNames;

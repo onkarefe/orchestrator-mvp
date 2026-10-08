@@ -25,7 +25,8 @@ const artifactsRoot = path.join(tempRoot, 'artifacts');
 await fs.mkdir(artifactsRoot, { recursive: true });
 
 function sourceItem(id, sku, quantity = 1) {
-  return { id, sku, title: sku, quantity };
+  // Sanitized synthetic fixture; EUR 10.00 per unit, tax included.
+  return { id, sku, title: sku, quantity, price: '10.00', discount_allocations: [], tax_lines: [] };
 }
 
 function orderFixture(id, sourceItems) {
@@ -35,7 +36,10 @@ function orderFixture(id, sourceItems) {
     raw_payload_json: {
       id: String(8000 + id),
       line_items: sourceItems,
-      shipping_lines: [{ title: 'Unsafe arbitrary shipping value' }],
+      currency: 'EUR', financial_status: 'paid', taxes_included: true,
+      payment_gateway_names: ['shopify_payments'],
+      total_price: `${sourceItems.reduce((sum, item) => sum + BigInt(item.quantity) * 10n, 0n)}.00`,
+      shipping_lines: [{ title: 'Unsafe arbitrary shipping value', price: '0.00', discount_allocations: [], tax_lines: [] }],
       shipping_address: {
         name: 'Factory Test',
         address1: 'Test Street 1',
@@ -209,7 +213,7 @@ try {
       ],
       artifactsRoot,
     }),
-    /order_factory_package_orphan_identity_mismatch/
+    /factory_financial_position_mismatch/
   );
   assert.equal(
     (await fs.stat(oneAssembly.packageDir)).isDirectory(),
@@ -432,14 +436,14 @@ try {
     ], wallpaper: [0], pdfs: 5, positions: 3 },
     { id: 11, sources: [
       sourceItem(1101, '283-391.0', 3),
-    ], wallpaper: [], pdfs: 0, positions: 3 },
+    ], wallpaper: [], pdfs: 0, positions: 1 },
     { id: 12, sources: [
       sourceItem(1201, '283-391.0', 2), sourceItem(1202, '283-388.0'),
-    ], wallpaper: [], pdfs: 0, positions: 3 },
+    ], wallpaper: [], pdfs: 0, positions: 2 },
     { id: 13, sources: [
       sourceItem(1301, '283-391.0', 2), sourceItem(1302, '20-140.1-3'),
       sourceItem(1303, '283-394.0'), sourceItem(1304, '20-331.1-3'),
-    ], wallpaper: [1, 3], pdfs: 6, positions: 5 },
+    ], wallpaper: [1, 3], pdfs: 6, positions: 4 },
     { id: 14, sources: [
       sourceItem(1401, '20-331.1-3'), sourceItem(1402, '283-391.0'),
     ], wallpaper: [0], pdfs: 1, positions: 2 },
@@ -467,12 +471,12 @@ try {
     assert.equal(input.jobs.length, fixture.wallpaper.length);
     assert.equal(ready.positions.length, fixture.positions);
     assert.deepEqual(ready.positions.map((position) => position.sku),
-      lines.flatMap((line) => Array(line.quantity).fill(line.sku)));
+      lines.map((line) => line.sku));
     for (const position of ready.positions.filter((p) => p.classification === 'ACCESSORY')) {
       assert.deepEqual(position.panelFiles, []);
       assert.equal(position.jobId, undefined);
       assert.equal(position.artifactId, undefined);
-      assert.equal(position.quantity, 1);
+      assert.equal(position.quantity, lines[position.sourcePosition].quantity);
     }
     const assembly = await assembleOrderFactoryPackage({
       order, positions: ready.positions, artifactsRoot,
@@ -486,7 +490,13 @@ try {
     assert.equal(xmlReferences(xml).length, fixture.pdfs);
     for (const [index, position] of ready.positions.entries()) {
       if (position.classification === 'ACCESSORY') {
-        assert.equal(xmlPositions[index][1].trim(), '<sku>' + position.sku + '</sku>');
+        assert.equal(xmlPositions[index][1].trim(), `<sku>${position.sku}</sku>
+      <width unit="mm">0</width>
+      <height unit="mm">0</height>
+      <variants>1</variants>
+      <copies_per_variant>${position.quantity}</copies_per_variant>
+      <total_price>${position.quantity * 10}.00</total_price>
+      <files/>`);
       }
     }
     const files = await resolveFactoryUploadFiles({

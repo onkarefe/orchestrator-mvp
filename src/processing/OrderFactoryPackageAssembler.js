@@ -12,8 +12,9 @@ import {
   buildWallpaperPanelFileName,
 } from './factoryFileNames.js';
 import { isPathInside, sanitizePathSegment } from './jobWorkspace.js';
-import { buildOrderXml } from './xml.js';
+import { buildOrderXml, matchFactoryFinancialPositions } from './xml.js';
 import { evaluateFactoryDispatchGate } from '../services/FactoryDispatchGateService.js';
+import { resolveFactoryFinancialData } from '../services/FactoryFinancialDataService.js';
 
 export const ORDER_FACTORY_PACKAGE_SCHEMA =
   'wandini.order-factory-package.v1';
@@ -160,6 +161,7 @@ async function readRenderPosition({
   }
 
   return {
+    classification: LINE_ITEM_CLASSIFICATIONS.WALLPAPER,
     sourcePosition: Number(lineItem.source_position),
     shopifyLineItemId: String(lineItem.shopify_line_item_id),
     sku: String(lineItem.sku).trim(),
@@ -181,6 +183,16 @@ export async function inspectOrderFactoryReadiness({
 
   if (!dispatchGate.allowed) {
     return blocked(dispatchGate.reason);
+  }
+
+  let financialData;
+  try {
+    financialData = resolveFactoryFinancialData(order.raw_payload_json);
+  } catch (error) {
+    if (/^FINANCIAL_[A-Z_]+$/.test(error?.code ?? '')) {
+      return blocked('factory_financial_data_invalid', { financialErrorCode: error.code });
+    }
+    throw error;
   }
 
   const safeJobs = Array.isArray(jobs) ? jobs : [];
@@ -211,16 +223,14 @@ export async function inspectOrderFactoryReadiness({
         });
       }
 
-      for (let unit = 0; unit < quantity; unit += 1) {
-        positions.push({
+      positions.push({
           classification: LINE_ITEM_CLASSIFICATIONS.ACCESSORY,
           sourcePosition: Number(lineItem.source_position),
           shopifyLineItemId: lineItemId,
           sku,
-          quantity: 1,
+          quantity,
           panelFiles: [],
-        });
-      }
+      });
       continue;
     }
 
@@ -317,6 +327,11 @@ export async function inspectOrderFactoryReadiness({
     return blocked('duplicate_factory_pdf_filename');
   }
 
+  try {
+    matchFactoryFinancialPositions(positions, financialData);
+  } catch (error) {
+    return blocked(error.code);
+  }
   return { ready: true, reason: null, positions };
 }
 
@@ -351,6 +366,7 @@ async function reconcileExistingPackageDirectory({
   finalDir,
   packageParent,
   orderNumber,
+  xml,
 }) {
   const realFinalDir = await fs.realpath(finalDir);
 
@@ -447,16 +463,8 @@ async function reconcileExistingPackageDirectory({
     totalSizeBytes += stat.size;
   }
 
-  const expectedXml = `${buildOrderXml({
-    order,
-    shopifyOrderId: order.shopify_order_id,
-    positions: positions.map((position) => ({
-      classification: position.classification,
-      sku: position.sku,
-      quantity: position.quantity,
-      panelFiles: position.panelFiles,
-    })),
-  })}\n`;
+  // Use the same validated serialization as a new package. Never rewrite an orphan.
+  const expectedXml = `${xml}\n`;
   const xmlPath = path.join(finalDir, xmlFileName);
 
   if ((await fs.readFile(xmlPath, 'utf8')) !== expectedXml) {
@@ -499,6 +507,22 @@ export async function assembleOrderFactoryPackage({
   positions,
   artifactsRoot = artifactsDir,
 } = {}) {
+  // Validate finances and the complete identity set before any filesystem writes.
+  // The exact same XML (including IDs/source positions supplied below) is used
+  // for both normal assembly and orphan verification.
+  let xml;
+  try {
+    xml = buildOrderXml({ order, shopifyOrderId: order?.shopify_order_id, positions });
+  } catch (error) {
+    if (/^FINANCIAL_[A-Z_]+$/.test(error?.code ?? '')) {
+      const failure = new Error('factory_financial_data_invalid');
+      failure.code = 'factory_financial_data_invalid';
+      failure.financialErrorCode = error.code;
+      throw failure;
+    }
+    throw error;
+  }
+  positions = [...positions].sort((left, right) => left.sourcePosition - right.sourcePosition);
   const safeOrderId = sanitizePathSegment(order?.id, 'unknown-order');
   const orderNumber = buildOrderFactoryIdentity(order?.shopify_order_id);
   const packageParent = path.resolve(
@@ -531,6 +555,7 @@ export async function assembleOrderFactoryPackage({
       finalDir,
       packageParent: realPackageParent,
       orderNumber,
+      xml,
     });
   }
 
@@ -567,16 +592,6 @@ export async function assembleOrderFactoryPackage({
       }
     }
 
-    const xml = buildOrderXml({
-      order,
-      shopifyOrderId: order.shopify_order_id,
-      positions: positions.map((position) => ({
-        classification: position.classification,
-        sku: position.sku,
-        quantity: position.quantity,
-        panelFiles: position.panelFiles,
-      })),
-    });
     const stagingXmlPath = path.join(stagingDir, xmlFileName);
     await fs.writeFile(stagingXmlPath, `${xml}\n`, {
       encoding: 'utf8',
