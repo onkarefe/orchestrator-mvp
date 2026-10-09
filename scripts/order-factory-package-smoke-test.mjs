@@ -34,6 +34,7 @@ function orderFixture(id, sourceItems) {
     id,
     shopify_order_id: String(8000 + id),
     raw_payload_json: {
+      email: 'factory.test@example.com',
       id: String(8000 + id),
       line_items: sourceItems,
       currency: 'EUR', financial_status: 'paid', taxes_included: true,

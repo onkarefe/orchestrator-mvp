@@ -24,6 +24,7 @@ function fixture(items, total, shopifyId = String(++sequence)) {
   const order = {
     id: ++sequence, shopify_order_id: shopifyId, status: 'processing',
     raw_payload_json: {
+      email: 'synthetic@example.com',
       id: shopifyId, currency: 'EUR', presentment_currency: 'EUR', financial_status: 'paid', taxes_included: true,
       payment_gateway_names: ['shopify_payments'], source_name: 'shopify_draft_order',
       total_price_set: money(total), total_shipping_price_set: money('0.00'), shipping_lines: [],

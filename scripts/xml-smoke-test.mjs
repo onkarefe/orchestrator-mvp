@@ -25,6 +25,7 @@ const order = {
   raw_payload_json: JSON.stringify({
     id: 7217548394776,
     name: '#TEST',
+    email: '  test.user@example.com  ',
     ...financialFields([{ id: 111, sku: 'wandini-prod1-b' }]),
     shipping_address: {
       name: 'Test User',
@@ -100,6 +101,7 @@ function assertPanelCase({
   );
   assert.ok(!xml.includes('<reference>'));
   assert.ok(xml.includes('<shipping_type>Standard</shipping_type>'));
+  assert.match(xml, /<phone>123456<\/phone>\s*<email>test.user@example.com<\/email>\s*<\/shipping_to>/);
   assert.match(xml, /<shipping_type>Standard<\/shipping_type>\s*<shipping_costs>0.00<\/shipping_costs>\s*<payment_method>Shopify Payments<\/payment_method>/);
   assert.match(xml, /<copies_per_variant>1<\/copies_per_variant>\s*<total_price>100.00<\/total_price>\s*<files>/);
   assert.ok(!xml.includes('<price>'));
@@ -332,6 +334,30 @@ const addonOrder = { raw_payload_json: {
 const accessoryXml = buildOrderXml({
   order: addonOrder, shopifyOrderId: '7217548394776', positions: [addon],
 });
+for (const [fields, expected] of [
+  [{ email: ' first@example.com ', contact_email: 'second@example.com', customer: { email: 'third@example.com' } }, 'first@example.com'],
+  [{ email: undefined, contact_email: ' second@example.com ', customer: { email: 'third@example.com' } }, 'second@example.com'],
+  [{ email: 'invalid', contact_email: ' second@example.com ' }, 'second@example.com'],
+  [{ email: ' ', contact_email: null, customer: { email: ' third@example.com ' } }, 'third@example.com'],
+  [{ email: {}, contact_email: 'invalid', customer: { email: 'third@example.com' } }, 'third@example.com'],
+  [{ email: " o'neil&team@example.com " }, 'o&apos;neil&amp;team@example.com'],
+]) {
+  for (const serialize of [payload => payload, JSON.stringify]) {
+    const xml = buildOrderXml({
+      order: { raw_payload_json: serialize({ ...addonOrder.raw_payload_json, ...fields }) },
+      shopifyOrderId: '7217548394776', positions: [addon],
+    });
+    assert.equal(xml, accessoryXml.replace('<email>test.user@example.com</email>', `<email>${expected}</email>`));
+  }
+}
+for (const email of [undefined, null, '', ' ', 123, {}, 'invalid', 'a@@example.com',
+  'a b@example.com', 'a\nb@example.com', '.a@example.com', 'a..b@example.com',
+  'a@-example.com', 'a@example..com', 'a@example.com<script>', `${'a'.repeat(65)}@example.com`]) {
+  assert.throws(() => buildOrderXml({
+    order: { raw_payload_json: { ...addonOrder.raw_payload_json, email, contact_email: 'invalid', customer: { email: ' ' } } },
+    shopifyOrderId: '7217548394776', positions: [addon],
+  }), /Valid customer email is required for NEXO XML/);
+}
 assert.equal((accessoryXml.match(/<position>/g) ?? []).length, 1);
 assert.match(accessoryXml, /<sku>283-391.0<\/sku>\s*<width unit="mm">0<\/width>\s*<height unit="mm">0<\/height>\s*<variants>1<\/variants>\s*<copies_per_variant>3<\/copies_per_variant>\s*<total_price>97.38<\/total_price>\s*<files\/>/);
 assert.throws(() => buildOrderXml({

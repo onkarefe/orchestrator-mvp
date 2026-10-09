@@ -67,6 +67,21 @@ function getShippingTo(rawPayload) {
   return validation.normalized;
 }
 
+function getCustomerEmail(rawPayload) {
+  for (const value of [rawPayload.email, rawPayload.contact_email, rawPayload.customer?.email]) {
+    if (typeof value !== 'string') continue;
+    const email = value.trim();
+    const parts = email.split('@');
+    if (email.length > 254 || parts.length !== 2 || parts[0].length > 64) continue;
+    const [local, domain] = parts;
+    if (!/^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/i.test(local)) continue;
+    if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(domain)) continue;
+    return email;
+  }
+
+  throw new Error('Valid customer email is required for NEXO XML');
+}
+
 function getGeneratedPanels(panelFiles) {
   if (!Array.isArray(panelFiles) || panelFiles.length === 0) {
     throw new Error('Generated panel PDFs are required for NEXO XML');
@@ -226,6 +241,7 @@ export function buildOrderXml({ order, shopifyOrderId, positions }) {
   const orderNumber = buildOrderFactoryIdentity(shopifyOrderId);
   const shippingFrom = getShippingFrom();
   const shippingTo = getShippingTo(rawPayload);
+  const customerEmail = getCustomerEmail(rawPayload);
   const financialData = resolveFactoryFinancialData(order.raw_payload_json);
   if (String(rawPayload.id) !== String(shopifyOrderId) ||
       (order.shopify_order_id !== undefined && String(order.shopify_order_id) !== String(shopifyOrderId))) {
@@ -260,6 +276,7 @@ export function buildOrderXml({ order, shopifyOrderId, positions }) {
       <city>${xmlEscape(shippingTo.city)}</city>
       <country>${xmlEscape(shippingTo.country)}</country>
       <phone>${xmlEscape(shippingTo.phone)}</phone>
+      <email>${xmlEscape(customerEmail)}</email>
     </shipping_to>
   </order>
   <positions>
