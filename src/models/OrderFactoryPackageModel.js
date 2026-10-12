@@ -122,6 +122,13 @@ export async function updateOrderFactoryPackageNexoState(
   return findOrderFactoryPackageById(id, executor);
 }
 
+export async function updateOrderFactoryPackageAggregateStatus(id, factoryStatus, db = pool) {
+  await getExecutor(db).execute(
+    'UPDATE order_factory_packages SET factory_status = ? WHERE id = ?', [factoryStatus, id]
+  );
+  return findOrderFactoryPackageById(id, db);
+}
+
 export default {
   createOrderFactoryPackage,
   findOrderFactoryPackageById,
@@ -129,4 +136,5 @@ export default {
   findOrderFactoryPackageByNexoOrderIdForUpdate,
   findOrderFactoryPackageByShopifyOrderIdForUpdate,
   updateOrderFactoryPackageNexoState,
+  updateOrderFactoryPackageAggregateStatus,
 };

@@ -233,7 +233,7 @@ export function parseNexoFactoryReference(reference) {
     return null;
   }
 
-  const match = reference.match(/^WANDINI-S([1-9][0-9]*)$/);
+  const match = reference.match(/^WANDINI-S([1-9][0-9]*)(?:-J([1-9][0-9]*))?$/);
 
   if (!match) {
     return null;
@@ -241,6 +241,7 @@ export function parseNexoFactoryReference(reference) {
 
   return {
     shopifyOrderId: match[1],
+    ...(match[2] ? { orderLineItemId: match[2] } : {}),
   };
 }
 
@@ -298,13 +299,13 @@ export function getNexoOrderStatus(nexoStatus) {
   return NEXO_STATUS_TO_ORDER_STATUS[nexoStatus] ?? null;
 }
 
-export function getNexoStatusSequenceIssue(previousStatus, nextStatus) {
+export function getNexoStatusSequenceIssue(previousStatus, nextStatus, { positionLevel = false } = {}) {
   if (!NEXO_CALLBACK_STATUS_SET.has(nextStatus)) {
     return 'unsupported_nexo_status';
   }
 
   if (!previousStatus) {
-    return nextStatus === 'accepted' || NEXO_TERMINAL_EXCEPTION_STATUSES.has(nextStatus)
+    return positionLevel || nextStatus === 'accepted' || NEXO_TERMINAL_EXCEPTION_STATUSES.has(nextStatus)
       ? null
       : 'nexo_status_out_of_order';
   }

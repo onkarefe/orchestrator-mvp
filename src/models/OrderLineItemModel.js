@@ -127,8 +127,39 @@ export async function listOrderLineItemsByOrderId(orderId, db = pool) {
   return rows.map(normalizeOrderLineItem);
 }
 
+export async function listOrderLineItemsByOrderIdForUpdate(orderId, db = pool) {
+  const [rows] = await getExecutor(db).execute(
+    `SELECT * FROM order_line_items
+    WHERE order_id = ? ORDER BY source_position ASC, id ASC FOR UPDATE`, [orderId]
+  );
+  return rows.map(normalizeOrderLineItem);
+}
+
+export async function findOrderLineItemByNexoJobId(nexoJobId, db = pool) {
+  // The unique index arbitrates cross-order races without taking another order's locks.
+  const [rows] = await getExecutor(db).execute(
+    'SELECT * FROM order_line_items WHERE nexo_job_id = ? LIMIT 1', [String(nexoJobId)]
+  );
+  return normalizeOrderLineItem(rows[0]);
+}
+
+export async function updateOrderLineItemNexoState(id, data, db = pool) {
+  const [result] = await getExecutor(db).execute(
+    `UPDATE order_line_items SET nexo_job_id = COALESCE(nexo_job_id, ?),
+      nexo_status = ?, nexo_parcel_service = ?, nexo_tracking_json = ?
+    WHERE id = ? AND order_id = ? AND (nexo_job_id IS NULL OR nexo_job_id = ?)`,
+    [data.nexoJobId, data.status, data.parcelService ?? null,
+      data.trackingNumbers ? JSON.stringify(data.trackingNumbers) : null,
+      id, data.orderId, data.nexoJobId]
+  );
+  return result.affectedRows === 1;
+}
+
 export default {
   createOrderLineItem,
   findOrderLineItemByIdentity,
   listOrderLineItemsByOrderId,
+  listOrderLineItemsByOrderIdForUpdate,
+  findOrderLineItemByNexoJobId,
+  updateOrderLineItemNexoState,
 };

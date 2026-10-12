@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
+import path from 'node:path';
 
 import { FACTORY_CALLBACK_PROCESSING_STATUSES } from '../src/constants/statuses.js';
-import { receiveNexoCallback, replayNexoCallback } from '../src/services/NexoCallbackService.js';
+import { receiveNexoCallback, replayNexoCallback, readNexoCallbackPackage } from '../src/services/NexoCallbackService.js';
+import { artifactsDir } from '../src/config/paths.js';
 import { ensureNexoShopifyUpdateTask } from '../src/services/ShopifyUpdateTaskService.js';
 
 import { recoverNexoCallbacks } from '../src/services/PipelineRecoveryService.js';
@@ -36,7 +39,7 @@ function payload({
   return result;
 }
 
-function createHarness() {
+function createHarness({ positionLevel = false, count = positionLevel ? 2 : 1 } = {}) {
   const state = {
     order: {
       id: 41,
@@ -80,6 +83,26 @@ function createHarness() {
     nextCallbackId: 1,
     nextTaskId: 1,
   };
+  state.lineItems = Array.from({ length: count }, (_, index) => ({
+    id: 30 + index * 12, order_id: state.order.id, shopify_order_id: state.order.shopify_order_id,
+    shopify_line_item_id: String(501 + index), source_position: index,
+    sku: index === 0 ? '20-140.1-3' : '283-388.0', quantity: 1,
+    classification: index === 0 ? 'WALLPAPER' : 'ACCESSORY',
+    nexo_job_id: null, nexo_status: null, nexo_parcel_service: null, nexo_tracking_json: null,
+  }));
+  state.evidence = {
+    manifest: {
+      order: { id: state.order.id, shopify_order_id: state.order.shopify_order_id, order_number: state.orderPackage.order_number },
+      validation: { ok: true, validationStatus: 'passed' },
+      contents: { position_count: count, positions: state.lineItems.map(line => ({
+        source_position: line.source_position, shopify_line_item_id: line.shopify_line_item_id,
+        sku: line.sku, quantity: line.quantity,
+      })) },
+    },
+    xml: `<root><order><order_number>${state.orderPackage.order_number}</order_number></order><positions>${state.lineItems.map(line =>
+      `<position>${positionLevel ? `<reference>${state.orderPackage.order_number}-J${line.id}</reference>` : ''}<sku>${line.sku}</sku></position>`
+    ).join('')}</positions></root>`,
+  };
   let transactionTail = Promise.resolve();
 
   function connection() {
@@ -112,6 +135,7 @@ function createHarness() {
       provider: data.provider,
       order_id: data.orderId ?? null,
       job_id: data.jobId ?? null,
+      order_line_item_id: data.orderLineItemId ?? null,
       order_factory_package_id: data.orderFactoryPackageId ?? null,
       factory_reference: data.factoryReference ?? null,
       shopify_order_id: data.shopifyOrderId ?? null,
@@ -150,6 +174,26 @@ function createHarness() {
   };
 
   const runtime = {
+    readNexoCallbackPackage: async () => structuredClone(state.evidence),
+    listOrderLineItemsByOrderIdForUpdate: async () => structuredClone(state.lineItems),
+    findOrderLineItemByNexoJobId: async id => structuredClone(
+      state.lineItems.find(line => line.nexo_job_id === id) ?? null
+    ),
+    updateOrderLineItemNexoState: async (id, data) => {
+      const line = state.lineItems.find(item => item.id === id);
+      assert.equal(data.orderId, line.order_id);
+      if (line.nexo_job_id && line.nexo_job_id !== data.nexoJobId) return false;
+      Object.assign(line, {
+        nexo_job_id: data.nexoJobId, nexo_status: data.status,
+        nexo_parcel_service: data.parcelService ?? null, nexo_tracking_json: data.trackingNumbers ?? null,
+      });
+      return true;
+    },
+    updateOrderFactoryPackageAggregateStatus: async (id, status) => {
+      assert.equal(id, state.orderPackage.id);
+      state.orderPackage.factory_status = status;
+      return { ...state.orderPackage };
+    },
     getConnection: async () => connection(),
     holdNexoReplayTaskConflict: async (id) => {
       const callback = state.callbacks.find((item) => item.id === id);
@@ -177,6 +221,7 @@ function createHarness() {
       callback.processing_status = data.processingStatus;
       callback.error_message = data.errorMessage ?? null;
       callback.order_id = data.orderId ?? callback.order_id;
+      callback.order_line_item_id = data.orderLineItemId ?? callback.order_line_item_id;
       callback.order_factory_package_id =
         data.orderFactoryPackageId ?? callback.order_factory_package_id;
       callback.duplicate_of_id =
@@ -222,9 +267,9 @@ function createHarness() {
     },
     updateOrderFactoryState: async (id, data) => {
       assert.equal(String(id), String(state.order.id));
-      state.order.factory_order_id =
+      if (data.factoryOrderId != null) state.order.factory_order_id =
         state.order.factory_order_id ?? String(data.factoryOrderId);
-      state.order.factory_status = data.factoryStatus;
+      if (data.factoryStatus !== undefined) state.order.factory_status = data.factoryStatus;
 
       if (data.status) {
         state.order.status = data.status;
@@ -321,8 +366,8 @@ const legacyReference = await receiveNexoCallback({
   config,
   runtime: malformedHarness.runtime,
 });
-assert.equal(legacyReference.httpStatus, 400);
-assert.ok(legacyReference.body.errors.includes('reference_invalid_format'));
+assert.equal(legacyReference.httpStatus, 202);
+assert.equal(legacyReference.body.error, 'nexo_position_reference_not_dispatched');
 assert.equal(malformedHarness.state.orderPackage.factory_status, null);
 
 const duplicateHarness = createHarness();
@@ -628,4 +673,203 @@ for (const priorStatus of [null, 'shipped']) {
   assert.equal(held.state.orderPackage.factory_status, priorStatus);
   assert.equal(held.state.shopifyTasks.length, 0);
 }
-console.log('order-level NEXO callback safety smoke ok');
+function positionPayload(id, options = {}) {
+  return { ...payload({ nexoExternalId: String(10808370 + id), ...options }),
+    reference: `WANDINI-S7248237232408-J${id}` };
+}
+function productionState(harness) {
+  const { order, orderPackage, lineItems, shopifyTasks } = harness.state;
+  return structuredClone({ order, orderPackage, lineItems, shopifyTasks });
+}
+const positions = createHarness({ positionLevel: true });
+const initialPrinted = await receive(positions, positionPayload(30, { status: 'printed' }));
+assert.equal(initialPrinted.httpStatus, 200);
+assert.equal(positions.state.lineItems[0].nexo_status, 'printed');
+assert.equal(positions.state.lineItems[1].nexo_status, null);
+assert.equal(positions.state.order.status, 'completed');
+assert.equal(positions.state.order.factory_status, null);
+assert.equal(positions.state.callbacks[0].order_line_item_id, 30);
+assert.equal(positions.state.callbacks[0].job_id, null);
+assert.equal(positions.state.callbacks[0].headers_json['x-nexo-api-key'], '[REDACTED]');
+assert.equal((await receive(positions, positionPayload(42))).httpStatus, 200);
+assert.equal(positions.state.order.status, 'factory_received');
+assert.equal(positions.state.orderPackage.factory_status, 'accepted');
+assert.equal(new Set(positions.state.lineItems.map(line => line.nexo_job_id)).size, 2);
+await receive(positions, positionPayload(42, { status: 'ready_to_print', sequence: 2 }));
+assert.equal(positions.state.order.status, 'production_started');
+assert.equal(positions.state.order.factory_status, 'ready_to_print');
+await receive(positions, positionPayload(42, { status: 'printed', sequence: 3 }));
+assert.equal(positions.state.order.status, 'production_completed');
+
+for (const [options, error] of [
+  [{ status: 'accepted', sequence: 4 }, 'nexo_status_out_of_order'],
+  [{ status: 'printed', nexoExternalId: 'wrong-id', sequence: 5 }, 'nexo_position_external_id_mismatch'],
+]) {
+  const before = productionState(positions);
+  const result = await receive(positions, positionPayload(30, options));
+  assert.equal(result.body.error, error);
+  assert.equal(result.body.processingStatus, 'manual_review');
+  assert.deepEqual(productionState(positions), before);
+}
+const beforeDuplicate = productionState(positions);
+assert.equal((await receive(positions, positionPayload(30, { status: 'printed', sequence: 6 }))).body.duplicate, true);
+assert.deepEqual(productionState(positions), beforeDuplicate);
+const firstShipment = positionPayload(30, { status: 'shipped', sequence: 7, trackingNumbers: shippedTracking });
+assert.equal((await receive(positions, firstShipment)).httpStatus, 200);
+assert.equal(positions.state.order.status, 'production_completed');
+assert.equal(positions.state.order.factory_status, 'printed');
+assert.deepEqual(positions.state.lineItems[0].nexo_tracking_json, shippedTracking);
+assert.equal(positions.state.lineItems[0].nexo_parcel_service, 'UPS');
+assert.equal((await receive(positions, firstShipment)).body.duplicate, true);
+const lastShipment = positionPayload(42, { status: 'shipped', sequence: 8, trackingNumbers: [{ number: 'ACCESSORY-TRACK' }] });
+const positionRace = await Promise.all([receive(positions, lastShipment), receive(positions, lastShipment)]);
+assert.equal(positionRace.filter(result => result.body.duplicate).length, 1);
+assert.equal(positions.state.order.status, 'shipped');
+assert.equal(positions.state.order.factory_status, 'shipped');
+assert.equal(positions.state.orderPackage.factory_status, 'shipped');
+assert.equal(positions.state.order.factory_order_id, null);
+assert.equal(positions.state.orderPackage.nexo_order_id, null);
+assert.equal(positions.state.shopifyTasks.length, 0);
+const shippedState = productionState(positions);
+assert.equal((await receive(positions, positionPayload(30, {
+  status: 'shipped', sequence: 9, trackingNumbers: shippedTracking,
+}))).body.duplicate, true);
+const conflict = await receive(positions, positionPayload(30, {
+  status: 'shipped', sequence: 10, trackingNumbers: [{ number: 'CONFLICT' }],
+}));
+assert.equal(conflict.body.error, 'nexo_position_tracking_conflict');
+assert.deepEqual(productionState(positions), shippedState);
+
+for (const status of ['accepted', 'ready_to_print', 'printed', 'shipped']) {
+  const harness = createHarness({ positionLevel: true, count: 1 });
+  const outcome = await receive(harness, positionPayload(30, {
+    status, trackingNumbers: status === 'shipped' ? shippedTracking : undefined,
+  }));
+  assert.equal(outcome.httpStatus, 200);
+  assert.equal(harness.state.orderPackage.factory_status, status);
+  assert.equal(harness.state.shopifyTasks.length, 0);
+}
+for (const [change, error] of [
+  [h => { h.state.lineItems[0].order_id = 999; }, 'nexo_package_position_identity_mismatch'],
+  [h => { h.state.lineItems[0].shopify_order_id = '999'; }, 'nexo_package_position_identity_mismatch'],
+  [h => { h.state.lineItems[0].shopify_line_item_id = '999'; }, 'nexo_package_position_identity_mismatch'],
+  [h => { h.state.lineItems[0].source_position = 9; }, 'nexo_package_position_identity_mismatch'],
+  [h => { h.state.evidence.manifest.contents.positions[0] = null; }, 'nexo_package_position_identity_mismatch'],
+  [h => { h.state.evidence.xml = h.state.evidence.xml.replace('-J30', '-J999'); }, 'nexo_position_reference_not_dispatched'],
+  [h => { h.state.order.status = 'SECURITY_HOLD'; }, 'checkout_security_hold'],
+  [h => { h.state.order.status = 'failed'; }, 'order_not_ready_for_nexo_callback'],
+  [h => { h.state.order.status = 'shipped'; }, 'unsafe_order_status_transition'],
+  [h => { h.runtime.findOrderLineItemByNexoJobId = async () => ({ id: 999 }); }, 'nexo_external_id_already_bound_to_another_position'],
+  [h => { h.runtime.updateOrderLineItemNexoState = async () => { throw Object.assign(new Error('unique collision'), { code: 'ER_DUP_ENTRY' }); }; }, 'nexo_external_id_already_bound_to_another_position'],
+]) {
+  const harness = createHarness({ positionLevel: true });
+  change(harness);
+  const before = productionState(harness);
+  const outcome = await receive(harness, positionPayload(30, { status: 'printed' }));
+  assert.equal(outcome.body.error, error);
+  assert.equal(outcome.body.processingStatus, 'manual_review');
+  assert.deepEqual(productionState(harness), before);
+}
+const unknownPosition = createHarness({ positionLevel: true });
+assert.equal((await receive(unknownPosition, positionPayload(999))).body.error, 'nexo_order_line_item_not_found');
+const collision = createHarness({ positionLevel: true });
+await receive(collision, positionPayload(30));
+assert.equal((await receive(collision, positionPayload(42, {
+  nexoExternalId: collision.state.lineItems[0].nexo_job_id,
+}))).body.error, 'nexo_external_id_already_bound_to_another_position');
+assert.equal(collision.state.lineItems[1].nexo_status, null);
+
+for (const positionLevel of [false, true]) {
+  const ambiguous = createHarness({ positionLevel, count: 2 });
+  assert.equal((await receive(ambiguous, payload({}))).body.error, 'nexo_legacy_position_identity_ambiguous');
+  assert.equal(ambiguous.state.orderPackage.factory_status, null);
+}
+const simultaneous = createHarness({ positionLevel: true });
+const concurrentPositions = await Promise.all([30, 42].map(id =>
+  receive(simultaneous, positionPayload(id, { status: 'printed' }))));
+assert.ok(concurrentPositions.every(result => result.httpStatus === 200));
+assert.equal(simultaneous.state.order.status, 'production_completed');
+assert.equal(simultaneous.state.shopifyTasks.length, 0);
+const ahead = createHarness({ positionLevel: true });
+ahead.state.order.status = 'ready_for_shipping';
+await receive(ahead, positionPayload(30));
+await receive(ahead, positionPayload(42));
+assert.equal(ahead.state.order.status, 'ready_for_shipping');
+assert.equal(ahead.state.order.factory_status, 'accepted');
+
+for (const status of ['cancelled', 'error']) {
+  const exception = createHarness({ positionLevel: true });
+  assert.equal((await receive(exception, positionPayload(30, { status }))).httpStatus, 202);
+  assert.equal(exception.state.order.status, 'manual_review');
+  assert.equal(exception.state.lineItems[0].nexo_status, status);
+  const before = productionState(exception);
+  assert.equal((await receive(exception, positionPayload(30, { status: 'printed', sequence: 2 }))).body.error, 'nexo_status_after_terminal_status');
+  assert.deepEqual(productionState(exception), before);
+}
+const positionReplay = createHarness({ positionLevel: true });
+positionReplay.state.uploadTask.status = 'uploading';
+const positionHeld = await receive(positionReplay, positionPayload(30, { status: 'printed' }));
+positionReplay.state.uploadTask.status = 'uploaded';
+assert.equal((await replayNexoCallback(positionHeld.body.callbackId, { runtime: positionReplay.runtime })).body.processingStatus, 'processed');
+assert.equal(positionReplay.state.callbacks.length, 1);
+assert.equal(positionReplay.state.callbacks[0].order_line_item_id, 30);
+assert.equal(positionReplay.state.shopifyTasks.length, 0);
+const rollback = createHarness({ positionLevel: true });
+const beforeRollback = productionState(rollback);
+rollback.runtime.updateOrderFactoryPackageAggregateStatus = async () => { throw new Error('injected aggregate failure'); };
+await assert.rejects(receive(rollback, positionPayload(30)), /injected aggregate failure/);
+assert.deepEqual(productionState(rollback), beforeRollback);
+assert.equal(rollback.state.callbacks.length, 0);
+
+// Verify dispatched-XML evidence through the real local reader, without DB or FTP.
+await fs.mkdir(artifactsDir, { recursive: true });
+const fixtureRoot = await fs.mkdtemp(path.join(artifactsDir, '.nexo-position-smoke-'));
+try {
+  const harness = createHarness({ positionLevel: true, count: 1 });
+  const line = harness.state.lineItems[0];
+  line.classification = 'ACCESSORY';
+  line.sku = '283-388.0';
+  harness.state.evidence.manifest.contents.positions[0].sku = line.sku;
+  const xml = `<root><order><order_number>${harness.state.orderPackage.order_number}</order_number></order><positions><position>
+    <reference>${harness.state.orderPackage.order_number}-J30</reference><sku>${line.sku}</sku>
+    <width unit="mm">0</width><height unit="mm">0</height><variants>1</variants>
+    <copies_per_variant>1</copies_per_variant><total_price>10.00</total_price><files/>
+  </position></positions></root>`;
+  const sha = text => crypto.createHash('sha256').update(text).digest('hex');
+  const name = `${harness.state.orderPackage.order_number}.xml`;
+  const xmlPath = path.join(fixtureRoot, name);
+  const manifestPath = path.join(fixtureRoot, 'manifest.json');
+  const checksum = sha(xml);
+  const contentChecksum = sha(`${name}:${checksum}`);
+  const manifest = { ...harness.state.evidence.manifest,
+    schema: 'wandini.order-factory-package.v1', version: 1,
+    package: { content_checksum_sha256: contentChecksum },
+    contents: { ...harness.state.evidence.manifest.contents,
+      file_count: 1, pdf_count: 0, xml_file_name: name,
+      files: [{ name, source_path: xmlPath, checksum_sha256: checksum, size_bytes: Buffer.byteLength(xml) }],
+    },
+  };
+  await fs.writeFile(xmlPath, xml);
+  await fs.writeFile(manifestPath, JSON.stringify(manifest));
+  Object.assign(harness.state.artifact, { manifest_path: manifestPath, checksum });
+  Object.assign(harness.state.orderPackage, { manifest_path: manifestPath, content_checksum: contentChecksum });
+  harness.runtime.readNexoCallbackPackage = readNexoCallbackPackage;
+  assert.equal((await receive(harness, positionPayload(30, { status: 'printed' }))).httpStatus, 200);
+  const before = productionState(harness);
+  await fs.writeFile(xmlPath, xml.replace('-J30', '-J42'));
+  assert.equal((await receive(harness, positionPayload(30, {
+    status: 'shipped', sequence: 2, trackingNumbers: shippedTracking,
+  }))).body.error, 'nexo_dispatched_package_unverifiable');
+  assert.deepEqual(productionState(harness), before);
+} finally {
+  assert.equal(path.dirname(path.resolve(fixtureRoot)), path.resolve(artifactsDir));
+  assert.ok(path.basename(fixtureRoot).startsWith('.nexo-position-smoke-'));
+  await fs.rm(fixtureRoot, { recursive: true, force: true });
+}
+
+const positionMigration = await fs.readFile(new URL('../src/db/migrations/012_position_level_nexo_callbacks.sql', import.meta.url), 'utf8');
+assert.match(positionMigration, /uq_order_line_items_nexo_job_id/);
+assert.match(positionMigration, /FOREIGN KEY \(order_line_item_id\) REFERENCES order_line_items \(id\) ON DELETE SET NULL/);
+for (const field of ['nexo_job_id', 'nexo_status', 'nexo_parcel_service', 'nexo_tracking_json']) assert.ok(positionMigration.includes(field));
+assert.doesNotMatch(positionMigration, /\b(?:UPDATE|DELETE FROM|DROP)\b/i);
+console.log('order and position-level NEXO callback safety smoke ok');

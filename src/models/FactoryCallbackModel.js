@@ -105,6 +105,7 @@ export async function createFactoryCallback(data, db = pool) {
       order_id,
       job_id,
       order_factory_package_id,
+      order_line_item_id,
       factory_reference,
       shopify_order_id,
       order_number,
@@ -118,12 +119,13 @@ export async function createFactoryCallback(data, db = pool) {
       duplicate_of_id,
       processing_status,
       error_message
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.provider ?? 'factory_simulation',
       data.orderId ?? data.order_id ?? null,
       data.jobId ?? data.job_id ?? null,
       data.orderFactoryPackageId ?? data.order_factory_package_id ?? null,
+      data.orderLineItemId ?? data.order_line_item_id ?? null,
       data.factoryReference ?? data.factory_reference ?? null,
       data.shopifyOrderId ?? data.shopify_order_id ?? null,
       data.orderNumber ?? data.order_number ?? null,
@@ -274,6 +276,7 @@ export async function updateFactoryCallbackProcessingStatus(
     orderId = null,
     jobId = null,
     orderFactoryPackageId = null,
+    orderLineItemId = null,
     duplicateOfId = null,
   } = {},
   db = pool
@@ -287,6 +290,7 @@ export async function updateFactoryCallbackProcessingStatus(
       order_id = COALESCE(?, order_id),
       job_id = COALESCE(?, job_id),
       order_factory_package_id = COALESCE(?, order_factory_package_id),
+      order_line_item_id = COALESCE(?, order_line_item_id),
       duplicate_of_id = COALESCE(?, duplicate_of_id)
     WHERE id = ?`,
     [
@@ -295,6 +299,7 @@ export async function updateFactoryCallbackProcessingStatus(
       orderId,
       jobId,
       orderFactoryPackageId,
+      orderLineItemId,
       duplicateOfId,
       id,
     ]

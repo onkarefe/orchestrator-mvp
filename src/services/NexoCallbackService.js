@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 import env from '../config/env.js';
 import {
@@ -24,7 +26,14 @@ import {
   findOrderFactoryPackageByNexoOrderIdForUpdate,
   findOrderFactoryPackageByShopifyOrderIdForUpdate,
   updateOrderFactoryPackageNexoState,
+  updateOrderFactoryPackageAggregateStatus,
 } from '../models/OrderFactoryPackageModel.js';
+import {
+  listOrderLineItemsByOrderIdForUpdate,
+  findOrderLineItemByNexoJobId,
+  updateOrderLineItemNexoState,
+} from '../models/OrderLineItemModel.js';
+import { xmlEscape } from '../processing/xml.js';
 import {
   findOrderByShopifyOrderIdForUpdate,
   updateOrderFactoryState,
@@ -33,12 +42,14 @@ import { redact } from '../utils/redact.js';
 import { logInfo, logWarning } from './LogService.js';
 import {
   getNexoDeliveryIdentity,
+  canonicalizeNexoTrackingPayload,
   getNexoOrderStatus,
   getNexoStatusSequenceIssue,
   validateNexoCallbackPayload,
 } from './NexoCallbackAdapter.js';
 import { ensureNexoShopifyUpdateTask } from './ShopifyUpdateTaskService.js';
 import { canTransition } from './statusTransition.js';
+import { resolveFactoryUploadFiles } from './FactoryUploadService.js';
 
 const NEXO_PROVIDER = 'nexo';
 
@@ -74,6 +85,11 @@ const DEFAULT_RUNTIME = Object.freeze({
   findOriginalFactoryCallbackByDeliveryId,
   updateFactoryCallbackProcessingStatus,
   updateOrderFactoryPackageNexoState,
+  updateOrderFactoryPackageAggregateStatus,
+  listOrderLineItemsByOrderIdForUpdate,
+  findOrderLineItemByNexoJobId,
+  updateOrderLineItemNexoState,
+  readNexoCallbackPackage,
   updateOrderFactoryState,
   ensureNexoShopifyUpdateTask,
   logInfo,
@@ -352,7 +368,7 @@ function getPackageRelationshipIssue({
     !orderPackage ||
     String(orderPackage.order_id) !== String(order.id) ||
     String(orderPackage.shopify_order_id) !== String(order.shopify_order_id) ||
-    orderPackage.order_number !== normalized.reference
+    orderPackage.order_number !== `WANDINI-S${normalized.referenceParts.shopifyOrderId}`
   ) {
     return 'order_factory_package_identity_mismatch';
   }
@@ -412,6 +428,87 @@ function getOrderUpdateDecision(order, targetOrderStatus) {
 
 function requiresShopifyTask(status) {
   return status === 'shipped';
+}
+
+// Read only the immutable local package; the upload resolver verifies its paths,
+// XML/PDF checksums and durable content checksum without contacting FTP.
+export async function readNexoCallbackPackage({ artifact, orderPackage, artifactsRoot }) {
+  if (!orderPackage.manifest_path ||
+      path.resolve(orderPackage.manifest_path) !== path.resolve(artifact.manifest_path ?? '')) {
+    throw new Error('nexo_package_manifest_identity_mismatch');
+  }
+  const files = await resolveFactoryUploadFiles({ artifact, orderPackage, artifactsRoot });
+  const xml = await fs.readFile(files.xmlFile.filePath, 'utf8');
+  if (crypto.createHash('sha256').update(xml).digest('hex') !== files.xmlFile.checksum) {
+    throw new Error('nexo_package_xml_changed');
+  }
+  const manifest = JSON.parse(await fs.readFile(artifact.manifest_path, 'utf8'));
+  return { manifest, xml };
+}
+
+function getPackagePositionIssue({ order, orderPackage, lineItems, evidence, positionLevel }) {
+  const { manifest, xml } = evidence;
+  const positions = manifest?.contents?.positions;
+  const xmlPositions = [...String(xml).matchAll(/<position>([\s\S]*?)<\/position>/g)];
+  if (String(manifest?.order?.id) !== String(order.id) ||
+      String(manifest?.order?.shopify_order_id) !== String(order.shopify_order_id) ||
+      manifest?.order?.order_number !== orderPackage.order_number ||
+      manifest?.validation?.ok !== true || manifest?.validation?.validationStatus !== 'passed' ||
+      !String(xml).includes(`<order_number>${xmlEscape(orderPackage.order_number)}</order_number>`) ||
+      !Array.isArray(positions) || !positions.length ||
+      positions.some(position => !position || typeof position !== 'object') ||
+      positions.length !== lineItems.length || positions.length !== xmlPositions.length ||
+      Number(manifest.contents.position_count) !== positions.length) {
+    return 'nexo_package_position_identity_mismatch';
+  }
+  if (!positionLevel && (positions.length !== 1 || /<reference\b/.test(xml) ||
+      lineItems.some(line => line.nexo_job_id || line.nexo_status))) {
+    return 'nexo_legacy_position_identity_ambiguous';
+  }
+  const matched = new Set();
+  for (const [index, position] of positions.entries()) {
+    const line = lineItems.find(item =>
+      String(item.shopify_line_item_id) === String(position.shopify_line_item_id) &&
+      Number(item.source_position) === position.source_position);
+    if (!line || matched.has(String(line.id)) ||
+        !/^[1-9]\d*$/.test(String(line.id)) || !/^[1-9]\d*$/.test(String(line.shopify_line_item_id)) ||
+        !Number.isSafeInteger(position.source_position) || position.source_position < 0 ||
+        String(line.order_id) !== String(order.id) ||
+        String(line.shopify_order_id) !== String(order.shopify_order_id) ||
+        !['WALLPAPER', 'ACCESSORY'].includes(line.classification) ||
+        line.sku !== position.sku || Number(line.quantity) !== position.quantity ||
+        !xmlPositions[index][1].includes(`<sku>${xmlEscape(line.sku)}</sku>`)) {
+      return 'nexo_package_position_identity_mismatch';
+    }
+    matched.add(String(line.id));
+    if (positionLevel) {
+      const reference = xmlPositions[index][1].match(/^\s*<reference>([^<]+)<\/reference>\s*<sku>/)?.[1];
+      if (reference !== `WANDINI-S${order.shopify_order_id}-J${line.id}`) {
+        return 'nexo_position_reference_not_dispatched';
+      }
+    }
+  }
+  return null;
+}
+
+const POSITION_PROGRESS = ['accepted', 'ready_to_print', 'printed', 'shipped'];
+
+function aggregatePositionStatus(lineItems) {
+  const exception = lineItems.find(line => ['cancelled', 'error'].includes(line.nexo_status));
+  if (exception) return exception.nexo_status;
+  if (lineItems.some(line => !line.nexo_status)) return null;
+  return POSITION_PROGRESS[Math.min(...lineItems.map(line => POSITION_PROGRESS.indexOf(line.nexo_status)))];
+}
+
+function storedPositionTracking(line) {
+  let trackingNumbers = line.nexo_tracking_json;
+  if (typeof trackingNumbers === 'string') {
+    try { trackingNumbers = JSON.parse(trackingNumbers); } catch { return null; }
+  }
+  if (!Array.isArray(trackingNumbers)) return null;
+  return canonicalizeNexoTrackingPayload({
+    status: 'shipped', parcelService: line.nexo_parcel_service, trackingNumbers,
+  });
 }
 
 async function logManualReview(
@@ -562,6 +659,7 @@ async function processValidatedNexoCallback({
   let transactionStarted = false;
   let matchedOrderId = null;
   let matchedOrderFactoryPackageId = null;
+  let matchedOrderLineItemId = null;
   let connectionReleased = false;
   const releaseConnection = () => {
     if (!connectionReleased) {
@@ -598,6 +696,8 @@ async function processValidatedNexoCallback({
         normalized.reference !== replayCallback.factory_reference ||
         normalized.nexoJobId !== String(replayCallback.factory_order_id) ||
         normalized.status !== replayCallback.status ||
+        (replayCallback.order_line_item_id != null &&
+          normalized.referenceParts?.orderLineItemId !== String(replayCallback.order_line_item_id)) ||
         normalized.referenceParts?.shopifyOrderId !== String(replayCallback.shopify_order_id)
       ) {
         await runtime.updateFactoryCallbackProcessingStatus(replayCallback.id, {
@@ -679,6 +779,7 @@ async function processValidatedNexoCallback({
           orderId,
           jobId: null,
           orderFactoryPackageId,
+          orderLineItemId: matchedOrderLineItemId,
         },
         connection
       );
@@ -776,6 +877,121 @@ async function processValidatedNexoCallback({
         orderId: order.id,
         orderFactoryPackageId: orderPackage.id,
       });
+    }
+
+    // The order lock serializes callbacks across all positions of this order.
+    const lineItems = await runtime.listOrderLineItemsByOrderIdForUpdate(order.id, connection);
+    const positionLevel = Boolean(normalized.referenceParts.orderLineItemId);
+    const review = errorMessage => finishManualReview({
+      errorMessage, orderId: order.id, orderFactoryPackageId: orderPackage.id,
+    });
+    let evidence;
+    try {
+      evidence = await runtime.readNexoCallbackPackage({ artifact, orderPackage });
+    } catch {
+      return await review('nexo_dispatched_package_unverifiable');
+    }
+    const positionIssue = getPackagePositionIssue({ order, orderPackage, lineItems, evidence, positionLevel });
+    if (positionIssue) return await review(positionIssue);
+
+    if (positionLevel) {
+      const line = lineItems.find(item => String(item.id) === normalized.referenceParts.orderLineItemId);
+      if (!line) return await review('nexo_order_line_item_not_found');
+      matchedOrderLineItemId = line.id;
+      if (line.nexo_job_id && String(line.nexo_job_id) !== normalized.nexoJobId) {
+        return await review('nexo_position_external_id_mismatch');
+      }
+      if (lineItems.some(item => item.nexo_status && !item.nexo_job_id)) {
+        return await review('nexo_position_status_without_bound_external_id');
+      }
+      if (lineItems.some(item => item.nexo_status &&
+          ![...POSITION_PROGRESS, 'cancelled', 'error'].includes(item.nexo_status))) {
+        return await review('unknown_existing_nexo_status');
+      }
+      const boundLine = await runtime.findOrderLineItemByNexoJobId(normalized.nexoJobId, connection);
+      if (boundLine && String(boundLine.id) !== String(line.id)) {
+        return await review('nexo_external_id_already_bound_to_another_position');
+      }
+      const sequenceIssue = getNexoStatusSequenceIssue(line.nexo_status, normalized.status, { positionLevel: true });
+      if (sequenceIssue) return await review(sequenceIssue);
+      if (!FACTORY_CALLBACK_READY_ORDER_STATUSES.has(order.status)) {
+        return await review('order_not_ready_for_nexo_callback');
+      }
+      const previousAggregate = aggregatePositionStatus(lineItems);
+      if ((order.factory_status ?? null) !== previousAggregate ||
+          (orderPackage.factory_status ?? null) !== previousAggregate) {
+        return await review('order_package_factory_status_mismatch');
+      }
+      const duplicate = line.nexo_status === normalized.status;
+      const tracking = canonicalizeNexoTrackingPayload(normalized);
+      if (duplicate && normalized.status === 'shipped' &&
+          JSON.stringify(storedPositionTracking(line)) !== JSON.stringify(tracking)) {
+        return await review('nexo_position_tracking_conflict');
+      }
+      const projected = lineItems.map(item => item === line ? { ...item, nexo_status: normalized.status } : item);
+      const projectedStatus = aggregatePositionStatus(projected);
+      const targetStatus = projectedStatus ? getNexoOrderStatus(projectedStatus) : order.status;
+      const isException = ['cancelled', 'error'].includes(projectedStatus);
+      if (order.status === ORDER_STATUSES.SHIPPED && (!duplicate || projectedStatus !== 'shipped')) {
+        return await review('unsafe_order_status_transition');
+      }
+      const advance = !duplicate && (isException ||
+        FACTORY_ORDER_STATUS_RANK[targetStatus] > FACTORY_ORDER_STATUS_RANK[order.status]);
+      if (advance && !canTransition(STATUS_GROUPS.ORDER, order.status, targetStatus)) {
+        return await review('unsafe_order_status_transition');
+      }
+
+      if (!duplicate) {
+        let updated;
+        try {
+          updated = await runtime.updateOrderLineItemNexoState(line.id, {
+            orderId: order.id, nexoJobId: normalized.nexoJobId, status: normalized.status,
+            parcelService: tracking?.parcelService, trackingNumbers: tracking?.trackingNumbers,
+          }, connection);
+        } catch (error) {
+          // A competing order can win the unique external-ID binding after our read.
+          if (!isDuplicateKeyError(error)) throw error;
+          return await review('nexo_external_id_already_bound_to_another_position');
+        }
+        if (!updated) return await review('nexo_position_conditional_binding_failed');
+        const persisted = await runtime.listOrderLineItemsByOrderIdForUpdate(order.id, connection);
+        const aggregate = aggregatePositionStatus(persisted);
+        if (aggregate !== projectedStatus) throw new Error('NEXO position aggregate changed under order lock');
+        await runtime.updateOrderFactoryPackageAggregateStatus(orderPackage.id, aggregate, connection);
+        await runtime.updateOrderFactoryState(order.id, {
+          factoryStatus: aggregate ?? undefined,
+          status: advance ? targetStatus : undefined,
+          manualReviewReason: isException ? `nexo_callback_${aggregate}` : undefined,
+        }, connection);
+      }
+      const processingStatus = duplicate ? FACTORY_CALLBACK_PROCESSING_STATUSES.DUPLICATE
+        : isException ? FACTORY_CALLBACK_PROCESSING_STATUSES.MANUAL_REVIEW
+          : FACTORY_CALLBACK_PROCESSING_STATUSES.PROCESSED;
+      const updatedCallback = await runtime.updateFactoryCallbackProcessingStatus(callback.id, {
+        processingStatus, orderId: order.id, orderFactoryPackageId: orderPackage.id,
+        orderLineItemId: line.id,
+        errorMessage: isException ? `nexo_status_${projectedStatus}_requires_manual_review` : null,
+      }, connection);
+      await connection.commit();
+      transactionStarted = false;
+      releaseConnection();
+      await runtime[isException ? 'logWarning' : 'logInfo']({
+        scopeType: 'order', orderId: order.id, jobId: null,
+        step: duplicate ? 'nexo_callback.duplicate' : 'nexo_callback.position_processed',
+        message: duplicate ? 'Duplicate NEXO position status safely ignored' : 'NEXO position callback processed',
+        detailsJson: {
+          callbackId: updatedCallback.id, orderFactoryPackageId: orderPackage.id,
+          orderLineItemId: line.id, reference: normalized.reference,
+          nexoExternalId: normalized.nexoJobId, nexoStatus: normalized.status,
+          aggregateFactoryStatus: projectedStatus,
+        },
+      });
+      return { httpStatus: isException ? 202 : 200, body: {
+        ok: true, duplicate, callbackId: updatedCallback.id, processingStatus,
+        orderId: order.id, orderFactoryPackageId: orderPackage.id, orderLineItemId: line.id,
+        orderUpdated: advance, orderStatus: advance ? targetStatus : order.status,
+        shopifyUpdateTaskCreated: false,
+      } };
     }
 
     if (

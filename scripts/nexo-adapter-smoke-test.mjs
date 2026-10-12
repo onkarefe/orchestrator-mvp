@@ -121,13 +121,30 @@ const missingReference = validateNexoCallbackPayload({
 assert.equal(missingReference.ok, false);
 assert.ok(missingReference.errors.includes('reference_required'));
 
-const legacyJobReference = validateNexoCallbackPayload({
+const positionReference = validateNexoCallbackPayload({
   ...basePayload,
   reference: 'WANDINI-S7248237232408-J24',
   status: 'accepted',
 });
-assert.equal(legacyJobReference.ok, false);
-assert.ok(legacyJobReference.errors.includes('reference_invalid_format'));
+assert.equal(positionReference.ok, true);
+assert.deepEqual(positionReference.normalized.referenceParts, {
+  shopifyOrderId: '7248237232408', orderLineItemId: '24',
+});
+for (const reference of ['WANDINI-S0-J24', 'WANDINI-S12-J0', 'WANDINI-S12-J01',
+  'WANDINI-S12-J-1', 'WANDINI-S12-J1.5', 'WANDINI-S12-J1e2', 'WANDINI-S12-J',
+  'WANDINI-S12-J24-extra', 'WANDINI-S01', 'WANDINI-S-1']) {
+  assert.ok(validateNexoCallbackPayload({ ...basePayload, reference, status: 'printed' })
+    .errors.includes('reference_invalid_format'));
+}
+for (const status of normalStatuses) {
+  assert.equal(getNexoStatusSequenceIssue(null, status, { positionLevel: true }), null);
+}
+for (const [previous, next] of [['printed', 'accepted'], ['shipped', 'printed'], ['error', 'printed']]) {
+  assert.ok(getNexoStatusSequenceIssue(previous, next, { positionLevel: true }));
+}
+assert.equal(validateNexoCallbackPayload({
+  ...basePayload, reference: positionReference.normalized.reference, status: 'shipped',
+}).ok, false);
 
 const firstEventKey = getNexoDeliveryIdentity({
   headers: {},
