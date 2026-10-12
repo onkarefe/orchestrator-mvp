@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import env from '../config/env.js';
 import { isDuplicateKeyError } from '../db/errors.js';
 import {
@@ -350,11 +351,145 @@ function canonicalTrackingNumbers(value) {
     });
 }
 
+function invalidPositionShipment(reason) {
+  const error = new Error(`nexo_position_shipment_${reason}`);
+  error.code = 'NEXO_POSITION_SHIPMENT_INVALID';
+  throw error;
+}
+
+function positionShipmentId(value) {
+  if ((typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) &&
+      (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0)) {
+    invalidPositionShipment('identity_invalid');
+  }
+  return String(value);
+}
+
+function positionTracking(value) {
+  let entries = value;
+  if (typeof entries === 'string') {
+    try { entries = JSON.parse(entries); } catch { invalidPositionShipment('tracking_invalid'); }
+  }
+  if (!Array.isArray(entries) || entries.length === 0) invalidPositionShipment('tracking_missing');
+  const byNumber = new Map();
+  for (const entry of entries) {
+    if (!entry || !['string', 'number'].includes(typeof entry.number) ||
+        (typeof entry.number === 'number' && !Number.isSafeInteger(entry.number))) {
+      invalidPositionShipment('tracking_invalid');
+    }
+    const number = String(entry.number).trim();
+    if (!number || number.length > 191) invalidPositionShipment('tracking_invalid');
+    if (entry.url != null && typeof entry.url !== 'string') invalidPositionShipment('tracking_url_invalid');
+    const url = entry.url?.trim() || null;
+    if (url) {
+      try {
+        if (url.length > 2048 || !['http:', 'https:'].includes(new URL(url).protocol)) throw new Error();
+      } catch { invalidPositionShipment('tracking_url_invalid'); }
+    }
+    if (byNumber.has(number) && byNumber.get(number).url !== url) invalidPositionShipment('tracking_conflict');
+    byNumber.set(number, { number, url });
+  }
+  return canonicalTrackingNumbers([...byNumber.values()]);
+}
+
+export function buildNexoPositionShipment({ order, orderPackage, lineItems } = {}) {
+  const orderId = positionShipmentId(order?.id);
+  const shopifyOrderId = positionShipmentId(order?.shopify_order_id);
+  positionShipmentId(orderPackage?.id);
+  if (String(orderPackage?.order_id) !== orderId ||
+      String(orderPackage?.shopify_order_id) !== shopifyOrderId ||
+      orderPackage?.order_number !== `WANDINI-S${shopifyOrderId}`) invalidPositionShipment('identity_invalid');
+  if (order.factory_order_id != null || orderPackage.nexo_order_id != null) invalidPositionShipment('mixed_identity');
+  if (!Array.isArray(lineItems) || lineItems.length === 0) invalidPositionShipment('positions_missing');
+  const ids = new Set();
+  const sourcePositions = new Set();
+  const shopifyLineIds = new Set();
+  const jobIds = new Set();
+  const carriers = new Set();
+  const positions = lineItems.map(line => {
+    const orderLineItemId = positionShipmentId(line?.id);
+    const shopifyLineItemId = positionShipmentId(line?.shopify_line_item_id);
+    if (String(line.order_id) !== orderId || String(line.shopify_order_id) !== shopifyOrderId ||
+        !Number.isSafeInteger(line.source_position) || line.source_position < 0 ||
+        ids.has(orderLineItemId) || sourcePositions.has(line.source_position) || shopifyLineIds.has(shopifyLineItemId)) {
+      invalidPositionShipment('identity_invalid');
+    }
+    if (line.nexo_status !== 'shipped') invalidPositionShipment('positions_not_shipped');
+    if (typeof line.nexo_job_id !== 'string' || !line.nexo_job_id.trim() ||
+        line.nexo_job_id !== line.nexo_job_id.trim() || line.nexo_job_id.length > 191 || jobIds.has(line.nexo_job_id)) {
+      invalidPositionShipment('external_id_invalid');
+    }
+    const carrier = line.nexo_parcel_service;
+    if (carrier !== null && (typeof carrier !== 'string' || !carrier.trim() ||
+        carrier !== carrier.trim() || carrier.length > 191)) invalidPositionShipment('carrier_invalid');
+    ids.add(orderLineItemId);
+    sourcePositions.add(line.source_position);
+    shopifyLineIds.add(shopifyLineItemId);
+    jobIds.add(line.nexo_job_id);
+    carriers.add(carrier);
+    return {
+      orderLineItemId, shopifyLineItemId, sourcePosition: line.source_position,
+      reference: `WANDINI-S${shopifyOrderId}-J${orderLineItemId}`,
+      nexoJobId: line.nexo_job_id, nexoStatus: 'shipped',
+      trackingNumbers: positionTracking(line.nexo_tracking_json), parcel_service: carrier,
+    };
+  }).sort((left, right) => left.sourcePosition - right.sourcePosition);
+  if (carriers.size !== 1) invalidPositionShipment('carrier_conflict');
+  const trackingNumbers = positionTracking(positions.flatMap(position => position.trackingNumbers));
+  if (trackingNumbers.length > 50) invalidPositionShipment('tracking_limit_exceeded');
+  const urlCount = trackingNumbers.filter(entry => entry.url !== null).length;
+  if (urlCount !== 0 && urlCount !== trackingNumbers.length) invalidPositionShipment('tracking_urls_partially_missing');
+  return { shipmentScope: 'position_aggregate', positions, trackingNumbers, parcel_service: positions[0].parcel_service };
+}
+
+export function matchesNexoPositionShipment(payload, shipment) {
+  return payload?.shipmentScope === 'position_aggregate' &&
+    !['nexoExternalId', 'nexo_external_id', 'nexoOrderId', 'nexo_order_id', 'factoryOrderId', 'factory_order_id', 'jobId', 'job_id']
+      .some(key => Object.hasOwn(payload, key)) &&
+    isDeepStrictEqual(payload.positions, shipment.positions) &&
+    isDeepStrictEqual(payload.trackingNumbers, shipment.trackingNumbers) &&
+    payload.parcel_service === shipment.parcel_service;
+}
+
+export function buildNexoPositionShopifyUpdateTaskDraft({ order, orderPackage, factoryCallback, positionLineItems } = {}) {
+  const shipment = buildNexoPositionShipment({ order, orderPackage, lineItems: positionLineItems });
+  if (order.status !== 'shipped' || order.factory_status !== 'shipped' ||
+      orderPackage.factory_status !== 'shipped' || orderPackage.status !== 'ready' || !factoryCallback?.id) {
+    invalidPositionShipment('aggregate_not_shipped');
+  }
+  const taskType = SHOPIFY_UPDATE_TASK_TYPES.ORDER_SHIPPED;
+  const idempotencyKey = buildNexoShopifyTaskIdempotencyKey({
+    orderFactoryPackageId: orderPackage.id, reference: orderPackage.order_number, taskType,
+  });
+  return {
+    orderId: order.id, shopifyOrderId: order.shopify_order_id, taskType, idempotencyKey,
+    sourceType: 'nexo_callback', sourceId: String(factoryCallback.id),
+    status: SHOPIFY_UPDATE_TASK_STATUSES.PENDING, dryRun: false,
+    maxAttempts: env.SHOPIFY_UPDATE_TASK_MAX_ATTEMPTS,
+    payloadJson: redact({
+      source: 'nexo_callback', taskType, idempotencyKey,
+      factoryCallbackId: String(factoryCallback.id), factoryCallbackStatus: factoryCallback.processing_status ?? null,
+      nexoStatus: 'shipped', reference: orderPackage.order_number, factoryReference: orderPackage.order_number,
+      orderFactoryPackageId: orderPackage.id, orderId: order.id, shopifyOrderId: order.shopify_order_id,
+      orderStatus: order.status, dryRun: false, writeSuppressed: false, ...shipment,
+    }),
+  };
+}
+
 function assertCompatibleNexoTask(existingTask, draft) {
   const payload = existingTask?.payload_json ?? {};
   const expectedPayload = draft.payloadJson ?? {};
+  const positionAggregate = expectedPayload.shipmentScope === 'position_aggregate';
+  const modeCompatible = positionAggregate
+    ? matchesNexoPositionShipment(payload, expectedPayload) &&
+      payload.factoryCallbackId != null && String(existingTask.source_id) === String(payload.factoryCallbackId) &&
+      existingTask.idempotency_key === draft.idempotencyKey && payload.idempotencyKey === draft.idempotencyKey &&
+      String(payload.orderId) === String(draft.orderId) && String(payload.shopifyOrderId) === String(draft.shopifyOrderId) &&
+      payload.nexoStatus === 'shipped' && payload.taskType === draft.taskType
+    : payload.shipmentScope === undefined && payload.positions === undefined &&
+      String(payload.nexoExternalId) === String(expectedPayload.nexoExternalId);
   const compatible = Boolean(
-    existingTask &&
+    existingTask && modeCompatible &&
       existingTask.dry_run === false &&
       existingTask.task_type === draft.taskType &&
       existingTask.source_type === draft.sourceType &&
@@ -368,8 +503,6 @@ function assertCompatibleNexoTask(existingTask, draft) {
         String(expectedPayload.orderFactoryPackageId) &&
       payload.reference === expectedPayload.reference &&
       payload.factoryReference === expectedPayload.factoryReference &&
-      String(payload.nexoExternalId) ===
-        String(expectedPayload.nexoExternalId) &&
       (draft.taskType !== SHOPIFY_UPDATE_TASK_TYPES.ORDER_SHIPPED ||
         (payload.parcel_service === expectedPayload.parcel_service &&
           JSON.stringify(canonicalTrackingNumbers(payload.trackingNumbers)) ===
@@ -394,6 +527,7 @@ export async function ensureNexoShopifyUpdateTask({
   orderPackage,
   factoryCallback,
   nexoCallback,
+  positionLineItems,
   db = undefined,
   runtime = {},
 } = {}) {
@@ -402,7 +536,9 @@ export async function ensureNexoShopifyUpdateTask({
     findShopifyUpdateTaskByIdempotencyKey;
   const createTask =
     runtime.createShopifyUpdateTask ?? createShopifyUpdateTask;
-  const draft = buildNexoShopifyUpdateTaskDraft({
+  const draft = positionLineItems !== undefined
+    ? buildNexoPositionShopifyUpdateTaskDraft({ order, orderPackage, factoryCallback, positionLineItems })
+    : buildNexoShopifyUpdateTaskDraft({
     order,
     orderPackage,
     factoryCallback,
@@ -419,7 +555,10 @@ export async function ensureNexoShopifyUpdateTask({
 
   const existingTask = await findByIdempotencyKey(
     draft.idempotencyKey,
-    db
+    db,
+    // A callback may have waited for the order lock after its transaction's
+    // first read. Use a current read to see the preceding callback's task.
+    { forUpdate: positionLineItems !== undefined }
   );
 
   if (existingTask) {
@@ -447,7 +586,8 @@ export async function ensureNexoShopifyUpdateTask({
 
     const task = await findByIdempotencyKey(
       draft.idempotencyKey,
-      db
+      db,
+      { forUpdate: positionLineItems !== undefined }
     );
 
     if (!task) {
@@ -466,6 +606,9 @@ export async function ensureNexoShopifyUpdateTask({
 
 export default {
   SHOPIFY_UPDATE_TASK_TYPES,
+  buildNexoPositionShipment,
+  matchesNexoPositionShipment,
+  buildNexoPositionShopifyUpdateTaskDraft,
   buildNexoShopifyUpdateTaskDraft,
   buildShopifyUpdateTaskDraft,
   ensureNexoShopifyUpdateTask,

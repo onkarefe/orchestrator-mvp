@@ -130,7 +130,8 @@ export async function findShopifyUpdateTaskById(id, db = pool) {
 
 export async function findShopifyUpdateTaskByIdempotencyKey(
   idempotencyKey,
-  db = pool
+  db = pool,
+  { forUpdate = false } = {}
 ) {
   if (
     idempotencyKey === null ||
@@ -144,7 +145,7 @@ export async function findShopifyUpdateTaskByIdempotencyKey(
   const [rows] = await executor.execute(
     `SELECT * FROM shopify_update_tasks
     WHERE idempotency_key = ?
-    LIMIT 1`,
+    LIMIT 1${forUpdate ? ' FOR UPDATE' : ''}`,
     [String(idempotencyKey)]
   );
 

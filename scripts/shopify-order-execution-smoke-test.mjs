@@ -10,6 +10,8 @@ import {
 } from '../src/services/ShopifyUpdateExecutorService.js';
 import {
   ensureNexoShopifyUpdateTask,
+  buildNexoPositionShipment,
+  buildNexoPositionShopifyUpdateTaskDraft,
   SHOPIFY_UPDATE_TASK_TYPES,
 } from '../src/services/ShopifyUpdateTaskService.js';
 
@@ -119,6 +121,7 @@ function createHarness({
   artifactOverrides = {},
   uploadOverrides = {},
   remainingQuantities = [2, 1],
+  lineItems = [],
 } = {}) {
   const order = {
     id: orderId,
@@ -165,6 +168,10 @@ function createHarness({
   let mutationCount = 0;
 
   const runtime = {
+    listOrderLineItemsByOrderId: async id => {
+      assert.equal(id, orderId);
+      return structuredClone(lineItems);
+    },
     findOrderById: async () => ({ ...order }),
     findOrderFactoryPackageByOrderId: async () => ({ ...orderPackage }),
     findArtifactById: async () => ({ ...artifact }),
@@ -522,4 +529,144 @@ const heldOrder = await heldHarness.runtime.findOrderById(orderId);
 heldHarness.runtime.findOrderById = async () => ({ ...heldOrder, status: 'SECURITY_HOLD' });
 heldHarness.graphqlClient.request = async () => assert.fail('Held order must not call Shopify');
 assert.equal((await execute(heldHarness)).disposition, 'manual_review');
+function aggregateFixture() {
+  const order = { id: orderId, shopify_order_id: shopifyOrderId, status: 'shipped', factory_status: 'shipped', factory_order_id: null };
+  const orderPackage = { id: orderFactoryPackageId, order_id: orderId, shopify_order_id: shopifyOrderId,
+    artifact_id: artifactId, order_number: reference, status: 'ready', factory_status: 'shipped', nexo_order_id: null };
+  const lineItems = [30, 42].map((id, index) => ({
+    id, order_id: orderId, shopify_order_id: shopifyOrderId, shopify_line_item_id: String(7000 + index),
+    source_position: index, nexo_job_id: String(10808370 + index), nexo_status: 'shipped', nexo_parcel_service: 'UPS',
+    nexo_tracking_json: [
+      { number: `TRACK-${index}`, url: `https://example.test/${index}` },
+      { number: 'SHARED', url: 'https://example.test/shared' },
+    ],
+  }));
+  lineItems[1].nexo_tracking_json = JSON.stringify(lineItems[1].nexo_tracking_json);
+  return { order, orderPackage, lineItems };
+}
+function aggregateHarness() {
+  const fixture = aggregateFixture();
+  const draft = buildNexoPositionShopifyUpdateTaskDraft({ ...fixture, positionLineItems: [...fixture.lineItems].reverse(),
+    factoryCallback: { id: 17, processing_status: 'processed' } });
+  const task = { ...buildTask(), payload_json: draft.payloadJson };
+  const harness = createHarness({ task, lineItems: fixture.lineItems,
+    orderOverrides: fixture.order, packageOverrides: fixture.orderPackage });
+  harness.runtime.findOrderById = async () => structuredClone(fixture.order);
+  harness.runtime.findOrderFactoryPackageByOrderId = async () => structuredClone(fixture.orderPackage);
+  return { ...harness, ...fixture };
+}
+const aggregated = aggregateHarness();
+assert.equal(aggregated.task.idempotency_key, idempotencyKey);
+assert.equal('nexoExternalId' in aggregated.task.payload_json, false);
+assert.deepEqual(aggregated.task.payload_json.positions.map(position => position.orderLineItemId), ['30', '42']);
+assert.equal((await execute(aggregated)).disposition, 'completed');
+assert.equal(aggregated.mutationCount(), 1);
+const aggregateFulfillment = aggregated.graphqlCalls.at(-1).variables.fulfillment;
+assert.deepEqual(aggregateFulfillment.trackingInfo, {
+  numbers: ['SHARED', 'TRACK-0', 'TRACK-1'],
+  urls: ['https://example.test/shared', 'https://example.test/0', 'https://example.test/1'], company: 'UPS',
+});
+assert.deepEqual(aggregateFulfillment.lineItemsByFulfillmentOrder, fulfillmentInput.lineItemsByFulfillmentOrder);
+
+for (const stage of ['initial', 'prewrite']) {
+  for (const [caseIndex, change] of [
+    h => { h.lineItems[1].nexo_status = 'printed'; },
+    h => { h.lineItems.pop(); },
+    h => { h.lineItems[1].order_id = 999; },
+    h => { h.lineItems[1].nexo_job_id = h.lineItems[0].nexo_job_id; },
+    h => { h.lineItems[1].nexo_parcel_service = 'DHL'; },
+    h => { h.task.payload_json.positions[0].reference = `${reference}-J999`; },
+    h => { h.task.payload_json.positions[0].nexoJobId = 'tampered'; },
+    h => { h.task.payload_json.trackingNumbers[0].number = 'tampered'; },
+    h => { h.task.payload_json.nexoExternalId = '123456'; },
+    h => { h.task.idempotency_key = 'tampered'; },
+    h => { h.task.source_id = '999'; },
+    h => { h.order.status = 'SECURITY_HOLD'; },
+    h => { h.orderPackage.factory_status = 'printed'; },
+    h => { h.orderPackage.nexo_order_id = '123456'; },
+  ].entries()) {
+    const harness = aggregateHarness();
+    if (stage === 'initial') change(harness);
+    else harness.runtime.findOwnedShopifyUpdateTaskClaim = async () => { change(harness); return { ...harness.task }; };
+    assert.equal((await execute(harness)).disposition, 'manual_review', `${stage} case ${caseIndex}`);
+    assert.equal(harness.mutationCount(), 0);
+    assert.equal(harness.graphqlCalls.length, stage === 'initial' ? 0 : 1);
+  }
+}
+for (const changes of [
+  { SHOPIFY_WRITE_ENABLED: false },
+  { SHOPIFY_UPDATE_EXECUTOR_ENABLED: false },
+  { SHOPIFY_WRITE_ORDER_ALLOWLIST: ['999999'] },
+]) {
+  const harness = aggregateHarness();
+  await execute(harness, { ...liveConfig, ...changes });
+  assert.equal(harness.mutationCount(), 0);
+}
+for (const change of [
+  h => { h.task.dry_run = true; },
+  h => { h.task.payload_json.dryRun = true; },
+  h => { h.task.payload_json.writeSuppressed = true; },
+]) {
+  const harness = aggregateHarness();
+  change(harness);
+  await execute(harness);
+  assert.equal(harness.mutationCount(), 0);
+}
+
+const lostOwnership = aggregateHarness();
+lostOwnership.task.locked_by = 'another-worker';
+await assert.rejects(execute(lostOwnership), { code: 'shopify_update_task_not_owned_by_executor' });
+assert.equal(lostOwnership.mutationCount(), 0);
+
+const withoutCarriers = aggregateFixture();
+for (const line of withoutCarriers.lineItems) {
+  line.nexo_parcel_service = null;
+  line.nexo_tracking_json = [{ number: 'SAME', url: null }];
+}
+assert.deepEqual(buildNexoPositionShipment(withoutCarriers).trackingNumbers, [{ number: 'SAME', url: null }]);
+assert.equal(buildNexoPositionShipment(withoutCarriers).parcel_service, null);
+for (const change of [
+  f => { f.lineItems[0].nexo_tracking_json = '{invalid'; },
+  f => { f.lineItems[0].nexo_tracking_json = []; },
+  f => { f.lineItems[0].nexo_tracking_json = [{ number: '' }]; },
+  f => { f.lineItems[0].nexo_tracking_json = [{ number: 'SHARED', url: null }]; },
+  f => { f.lineItems[0].nexo_tracking_json = [{ number: 'SHARED', url: 'https://example.test/other' }]; },
+  f => { f.lineItems[0].nexo_tracking_json = [{ number: 'NO-URL', url: null }]; },
+  f => { f.lineItems[0].nexo_parcel_service = null; },
+  f => { f.lineItems[0].nexo_parcel_service = 'DHL'; },
+  f => { f.lineItems[0].nexo_job_id = null; },
+]) {
+  const fixture = aggregateFixture(); change(fixture);
+  assert.throws(() => buildNexoPositionShipment(fixture), { code: 'NEXO_POSITION_SHIPMENT_INVALID' });
+}
+const limitFixture = aggregateFixture();
+limitFixture.lineItems[0].nexo_tracking_json = Array.from({ length: 49 }, (_, index) => ({ number: `LIMIT-${index}`, url: null }));
+limitFixture.lineItems[1].nexo_tracking_json = [{ number: 'LAST', url: null }];
+assert.equal(buildNexoPositionShipment(limitFixture).trackingNumbers.length, 50);
+limitFixture.lineItems[1].nexo_tracking_json.push({ number: 'TOO-MANY', url: null });
+assert.throws(() => buildNexoPositionShipment(limitFixture), /tracking_limit_exceeded/);
+
+const inputFixture = aggregateFixture();
+const aggregateTaskInput = { ...inputFixture, positionLineItems: inputFixture.lineItems,
+  factoryCallback: { id: 17, processing_status: 'processed' }, runtime: taskCreationRuntime };
+// Legacy and aggregate tasks share the same whole-order key and must never replace each other.
+await assert.rejects(ensureNexoShopifyUpdateTask(aggregateTaskInput), { code: 'NEXO_SHOPIFY_TASK_IDEMPOTENCY_CONFLICT' });
+taskCreationState.task = null;
+const positionTask = await ensureNexoShopifyUpdateTask(aggregateTaskInput);
+assert.equal(positionTask.created, true);
+assert.equal((await ensureNexoShopifyUpdateTask({ ...aggregateTaskInput,
+  positionLineItems: [...inputFixture.lineItems].reverse(), factoryCallback: { id: 18, processing_status: 'duplicate' },
+  runtime: { ...taskCreationRuntime,
+    // Model a callback whose earlier transaction snapshot predates the task.
+    findShopifyUpdateTaskByIdempotencyKey: async (_key, _db, options) =>
+      options?.forUpdate ? taskCreationState.task : null,
+    createShopifyUpdateTask: async () => assert.fail('Concurrent aggregate must reuse the committed task'),
+  },
+})).created, false);
+await assert.rejects(ensureNexoShopifyUpdateTask(taskCreationInput), { code: 'NEXO_SHOPIFY_TASK_IDEMPOTENCY_CONFLICT' });
+const savedPayload = structuredClone(taskCreationState.task.payload_json);
+taskCreationState.task.payload_json.positions[0].nexoJobId = 'changed';
+await assert.rejects(ensureNexoShopifyUpdateTask(aggregateTaskInput), { code: 'NEXO_SHOPIFY_TASK_IDEMPOTENCY_CONFLICT' });
+taskCreationState.task.payload_json = savedPayload;
+assert.equal(taskCreationState.creates, 2);
 console.log('Shopify whole-order execution smoke ok');

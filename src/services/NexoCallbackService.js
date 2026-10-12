@@ -47,7 +47,7 @@ import {
   getNexoStatusSequenceIssue,
   validateNexoCallbackPayload,
 } from './NexoCallbackAdapter.js';
-import { ensureNexoShopifyUpdateTask } from './ShopifyUpdateTaskService.js';
+import { ensureNexoShopifyUpdateTask, buildNexoPositionShipment } from './ShopifyUpdateTaskService.js';
 import { canTransition } from './statusTransition.js';
 import { resolveFactoryUploadFiles } from './FactoryUploadService.js';
 
@@ -928,7 +928,10 @@ async function processValidatedNexoCallback({
           JSON.stringify(storedPositionTracking(line)) !== JSON.stringify(tracking)) {
         return await review('nexo_position_tracking_conflict');
       }
-      const projected = lineItems.map(item => item === line ? { ...item, nexo_status: normalized.status } : item);
+      const projected = lineItems.map(item => item === line ? {
+        ...item, nexo_status: normalized.status, nexo_job_id: normalized.nexoJobId,
+        nexo_tracking_json: tracking?.trackingNumbers ?? null, nexo_parcel_service: tracking?.parcelService ?? null,
+      } : item);
       const projectedStatus = aggregatePositionStatus(projected);
       const targetStatus = projectedStatus ? getNexoOrderStatus(projectedStatus) : order.status;
       const isException = ['cancelled', 'error'].includes(projectedStatus);
@@ -940,7 +943,18 @@ async function processValidatedNexoCallback({
       if (advance && !canTransition(STATUS_GROUPS.ORDER, order.status, targetStatus)) {
         return await review('unsafe_order_status_transition');
       }
+      if (projectedStatus === 'shipped') {
+        try {
+          buildNexoPositionShipment({ order, orderPackage, lineItems: projected });
+        } catch (error) {
+          if (error.code !== 'NEXO_POSITION_SHIPMENT_INVALID') throw error;
+          return await review(error.message);
+        }
+      }
 
+      let persisted = lineItems;
+      let updatedPackage = orderPackage;
+      let updatedOrder = order;
       if (!duplicate) {
         let updated;
         try {
@@ -954,11 +968,11 @@ async function processValidatedNexoCallback({
           return await review('nexo_external_id_already_bound_to_another_position');
         }
         if (!updated) return await review('nexo_position_conditional_binding_failed');
-        const persisted = await runtime.listOrderLineItemsByOrderIdForUpdate(order.id, connection);
+        persisted = await runtime.listOrderLineItemsByOrderIdForUpdate(order.id, connection);
         const aggregate = aggregatePositionStatus(persisted);
         if (aggregate !== projectedStatus) throw new Error('NEXO position aggregate changed under order lock');
-        await runtime.updateOrderFactoryPackageAggregateStatus(orderPackage.id, aggregate, connection);
-        await runtime.updateOrderFactoryState(order.id, {
+        updatedPackage = await runtime.updateOrderFactoryPackageAggregateStatus(orderPackage.id, aggregate, connection);
+        updatedOrder = await runtime.updateOrderFactoryState(order.id, {
           factoryStatus: aggregate ?? undefined,
           status: advance ? targetStatus : undefined,
           manualReviewReason: isException ? `nexo_callback_${aggregate}` : undefined,
@@ -972,6 +986,15 @@ async function processValidatedNexoCallback({
         orderLineItemId: line.id,
         errorMessage: isException ? `nexo_status_${projectedStatus}_requires_manual_review` : null,
       }, connection);
+      const shopifyTaskResult = projectedStatus === 'shipped'
+        ? await runtime.ensureNexoShopifyUpdateTask({
+          order: updatedOrder, orderPackage: updatedPackage, factoryCallback: updatedCallback,
+          positionLineItems: persisted, db: connection,
+        })
+        : { task: null, created: false };
+      if (projectedStatus === 'shipped' && !shopifyTaskResult.task) {
+        throw new Error('Required NEXO position shipment Shopify task was not created or found');
+      }
       await connection.commit();
       transactionStarted = false;
       releaseConnection();
@@ -984,13 +1007,16 @@ async function processValidatedNexoCallback({
           orderLineItemId: line.id, reference: normalized.reference,
           nexoExternalId: normalized.nexoJobId, nexoStatus: normalized.status,
           aggregateFactoryStatus: projectedStatus,
+          shopifyUpdateTaskId: shopifyTaskResult.task?.id ?? null,
+          shopifyUpdateTaskCreated: shopifyTaskResult.created,
         },
       });
       return { httpStatus: isException ? 202 : 200, body: {
         ok: true, duplicate, callbackId: updatedCallback.id, processingStatus,
         orderId: order.id, orderFactoryPackageId: orderPackage.id, orderLineItemId: line.id,
         orderUpdated: advance, orderStatus: advance ? targetStatus : order.status,
-        shopifyUpdateTaskCreated: false,
+        shopifyUpdateTaskId: shopifyTaskResult.task?.id ?? null,
+        shopifyUpdateTaskCreated: shopifyTaskResult.created,
       } };
     }
 

@@ -104,6 +104,7 @@ function createHarness({ positionLevel = false, count = positionLevel ? 2 : 1 } 
     ).join('')}</positions></root>`,
   };
   let transactionTail = Promise.resolve();
+  let activeConnection = null;
 
   function connection() {
     let releaseLock;
@@ -116,13 +117,16 @@ function createHarness({ positionLevel = false, count = positionLevel ? 2 : 1 } 
           releaseLock = resolve;
         });
         await previous;
+        activeConnection = this;
         snapshot = structuredClone(state);
       },
       async commit() {
+        activeConnection = null;
         releaseLock();
       },
       async rollback() {
         Object.assign(state, snapshot);
+        activeConnection = null;
         releaseLock();
       },
       release() {},
@@ -155,7 +159,9 @@ function createHarness({ positionLevel = false, count = positionLevel ? 2 : 1 } 
   const taskRuntime = {
     findShopifyUpdateTaskByIdempotencyKey: async (key) =>
       state.shopifyTasks.find((task) => task.idempotency_key === key) ?? null,
-    createShopifyUpdateTask: async (draft) => {
+    createShopifyUpdateTask: async (draft, db) => {
+      assert.ok(activeConnection, 'Shipment task must be created before callback commit');
+      assert.equal(db, activeConnection);
       const task = {
         id: state.nextTaskId++,
         order_id: draft.orderId,
@@ -718,10 +724,11 @@ const firstShipment = positionPayload(30, { status: 'shipped', sequence: 7, trac
 assert.equal((await receive(positions, firstShipment)).httpStatus, 200);
 assert.equal(positions.state.order.status, 'production_completed');
 assert.equal(positions.state.order.factory_status, 'printed');
+assert.equal(positions.state.shopifyTasks.length, 0);
 assert.deepEqual(positions.state.lineItems[0].nexo_tracking_json, shippedTracking);
 assert.equal(positions.state.lineItems[0].nexo_parcel_service, 'UPS');
 assert.equal((await receive(positions, firstShipment)).body.duplicate, true);
-const lastShipment = positionPayload(42, { status: 'shipped', sequence: 8, trackingNumbers: [{ number: 'ACCESSORY-TRACK' }] });
+const lastShipment = positionPayload(42, { status: 'shipped', sequence: 8, trackingNumbers: [{ number: 'ACCESSORY-TRACK', url: 'https://example.test/track/accessory' }] });
 const positionRace = await Promise.all([receive(positions, lastShipment), receive(positions, lastShipment)]);
 assert.equal(positionRace.filter(result => result.body.duplicate).length, 1);
 assert.equal(positions.state.order.status, 'shipped');
@@ -729,7 +736,15 @@ assert.equal(positions.state.order.factory_status, 'shipped');
 assert.equal(positions.state.orderPackage.factory_status, 'shipped');
 assert.equal(positions.state.order.factory_order_id, null);
 assert.equal(positions.state.orderPackage.nexo_order_id, null);
-assert.equal(positions.state.shopifyTasks.length, 0);
+assert.equal(positions.state.shopifyTasks.length, 1);
+const aggregateTask = positions.state.shopifyTasks[0];
+assert.equal(aggregateTask.payload_json.shipmentScope, 'position_aggregate');
+assert.equal('nexoExternalId' in aggregateTask.payload_json, false);
+assert.equal(aggregateTask.payload_json.reference, positions.state.orderPackage.order_number);
+assert.deepEqual(aggregateTask.payload_json.positions.map(position => position.orderLineItemId), ['30', '42']);
+assert.deepEqual(aggregateTask.payload_json.trackingNumbers, [
+  ...shippedTracking, { number: 'ACCESSORY-TRACK', url: 'https://example.test/track/accessory' },
+]);
 const shippedState = productionState(positions);
 assert.equal((await receive(positions, positionPayload(30, {
   status: 'shipped', sequence: 9, trackingNumbers: shippedTracking,
@@ -740,6 +755,60 @@ const conflict = await receive(positions, positionPayload(30, {
 assert.equal(conflict.body.error, 'nexo_position_tracking_conflict');
 assert.deepEqual(productionState(positions), shippedState);
 
+for (const [changes, expectedError] of [
+  [{ parcel_service: 'DHL' }, 'carrier_conflict'],
+  [{ parcel_service: null }, 'carrier_conflict'],
+  [{ tracking_numbers: [{ number: shippedTracking[0].number, url: 'https://example.test/conflict' }] }, 'tracking_conflict'],
+  [{ tracking_numbers: [{ number: shippedTracking[0].number }] }, 'tracking_conflict'],
+  [{ tracking_numbers: [{ number: 'OTHER-NUMBER' }] }, 'tracking_urls_partially_missing'],
+  [{ tracking_numbers: Array.from({ length: 50 }, (_, index) => ({ number: `N${index}`, url: `https://example.test/${index}` })) }, 'tracking_limit_exceeded'],
+]) {
+  const harness = createHarness({ positionLevel: true });
+  await receive(harness, positionPayload(30, { status: 'shipped', trackingNumbers: shippedTracking }));
+  const before = productionState(harness);
+  const event = positionPayload(42, { status: 'shipped', trackingNumbers: shippedTracking });
+  // Null carrier is represented by an absent callback field; persisted state remains NULL.
+  Object.assign(event, changes);
+  if (event.parcel_service === null) delete event.parcel_service;
+  const rejected = await receive(harness, event);
+  assert.equal(rejected.body.error, `nexo_position_shipment_${expectedError}`);
+  assert.equal(rejected.body.processingStatus, 'manual_review');
+  assert.deepEqual(productionState(harness), before);
+  assert.equal(harness.state.shopifyTasks.length, 0);
+}
+const taskFailure = createHarness({ positionLevel: true });
+await receive(taskFailure, positionPayload(30, { status: 'shipped', trackingNumbers: shippedTracking }));
+const beforeTaskFailure = productionState(taskFailure);
+const taskEnsurer = taskFailure.runtime.ensureNexoShopifyUpdateTask;
+const finalDelivery = positionPayload(42, { status: 'shipped', trackingNumbers: shippedTracking });
+taskFailure.runtime.ensureNexoShopifyUpdateTask = async () => { throw new Error('injected task insert failure'); };
+await assert.rejects(receive(taskFailure, finalDelivery), /injected task insert failure/);
+assert.deepEqual(productionState(taskFailure), beforeTaskFailure);
+assert.equal(taskFailure.state.callbacks.length, 1);
+taskFailure.runtime.ensureNexoShopifyUpdateTask = taskEnsurer;
+assert.equal((await receive(taskFailure, finalDelivery)).body.shopifyUpdateTaskCreated, true);
+assert.equal(taskFailure.state.shopifyTasks.length, 1);
+assert.deepEqual(taskFailure.state.shopifyTasks[0].payload_json.trackingNumbers, shippedTracking);
+const concurrentFinal = createHarness({ positionLevel: true });
+await receive(concurrentFinal, positionPayload(30, { status: 'shipped', trackingNumbers: shippedTracking }));
+const finalResults = await Promise.all([2, 3].map(sequence => receive(concurrentFinal,
+  positionPayload(42, { status: 'shipped', sequence, trackingNumbers: shippedTracking }))));
+assert.equal(finalResults.filter(result => result.body.shopifyUpdateTaskCreated).length, 1);
+assert.equal(finalResults.filter(result => result.body.duplicate).length, 1);
+assert.equal(concurrentFinal.state.shopifyTasks.length, 1);
+for (const existing of [sequenceHarness.state.shopifyTasks[0], { ...aggregateTask,
+  payload_json: { ...aggregateTask.payload_json, positions: [] },
+}]) {
+  const harness = createHarness({ positionLevel: true });
+  await receive(harness, positionPayload(30, { status: 'shipped', trackingNumbers: shippedTracking }));
+  harness.state.shopifyTasks.push(structuredClone(existing));
+  const before = productionState(harness);
+  const result = await receive(harness, lastShipment);
+  assert.equal(result.body.error, 'nexo_shopify_task_idempotency_conflict');
+  assert.deepEqual(productionState(harness), before);
+  assert.equal(harness.state.callbacks.at(-1).processing_status, 'manual_review');
+}
+
 for (const status of ['accepted', 'ready_to_print', 'printed', 'shipped']) {
   const harness = createHarness({ positionLevel: true, count: 1 });
   const outcome = await receive(harness, positionPayload(30, {
@@ -747,7 +816,7 @@ for (const status of ['accepted', 'ready_to_print', 'printed', 'shipped']) {
   }));
   assert.equal(outcome.httpStatus, 200);
   assert.equal(harness.state.orderPackage.factory_status, status);
-  assert.equal(harness.state.shopifyTasks.length, 0);
+  assert.equal(harness.state.shopifyTasks.length, status === 'shipped' ? 1 : 0);
 }
 for (const [change, error] of [
   [h => { h.state.lineItems[0].order_id = 999; }, 'nexo_package_position_identity_mismatch'],

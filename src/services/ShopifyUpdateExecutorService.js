@@ -5,6 +5,7 @@ import { findArtifactById } from '../models/ArtifactModel.js';
 import { findFactoryUploadTaskByOrderPackageId } from '../models/FactoryUploadTaskModel.js';
 import { findOrderFactoryPackageByOrderId } from '../models/OrderFactoryPackageModel.js';
 import { findOrderById } from '../models/OrderModel.js';
+import { listOrderLineItemsByOrderId } from '../models/OrderLineItemModel.js';
 import {
   claimNextPendingShopifyUpdateTask,
   finalizeShopifyUpdateTask,
@@ -23,7 +24,7 @@ import {
   SHOPIFY_EXTERNAL_WRITE_BLOCK_REASONS,
   evaluateShopifyExternalWriteGates,
 } from './ShopifyUpdateExecutorSafety.js';
-import { SHOPIFY_UPDATE_TASK_TYPES } from './ShopifyUpdateTaskService.js';
+import { SHOPIFY_UPDATE_TASK_TYPES, buildNexoPositionShipment, matchesNexoPositionShipment } from './ShopifyUpdateTaskService.js';
 import { buildNexoShopifyTaskIdempotencyKey } from './NexoCallbackAdapter.js';
 
 export const SHOPIFY_ORDER_FULFILLMENT_QUERY = `
@@ -87,6 +88,7 @@ function executorRuntime(overrides = {}) {
     findArtifactById,
     findFactoryUploadTaskByOrderPackageId,
     findOrderById,
+    listOrderLineItemsByOrderId,
     findOrderFactoryPackageByOrderId,
     findOwnedShopifyUpdateTaskClaim,
     releaseStaleShopifyUpdateTaskClaims,
@@ -226,16 +228,28 @@ function taskIdentityIssue(task, payload, context = {}) {
     return 'shopify_update_task_package_not_shipped';
   }
 
-  const nexoExternalId = scalar(payload.nexoExternalId);
-
-  if (
-    !nexoExternalId ||
-    String(order.factory_order_id ?? '') !== nexoExternalId ||
-    String(orderPackage.nexo_order_id ?? '') !== nexoExternalId ||
-    payload.reference !== orderPackage.order_number ||
+  if (payload.reference !== orderPackage.order_number ||
     payload.factoryReference !== orderPackage.order_number
   ) {
     return 'shopify_update_task_factory_identity_mismatch';
+  }
+  if (payload.shipmentScope === 'position_aggregate') {
+    try {
+      const shipment = buildNexoPositionShipment({ order, orderPackage, lineItems: context.lineItems });
+      if (!matchesNexoPositionShipment(payload, shipment) ||
+          !payload.factoryCallbackId || String(task.source_id) !== String(payload.factoryCallbackId)) {
+        return 'shopify_update_task_position_snapshot_mismatch';
+      }
+    } catch {
+      return 'shopify_update_task_position_shipment_invalid';
+    }
+  } else {
+    const nexoExternalId = scalar(payload.nexoExternalId);
+    if (payload.shipmentScope !== undefined || payload.positions !== undefined || !nexoExternalId ||
+        String(order.factory_order_id ?? '') !== nexoExternalId ||
+        String(orderPackage.nexo_order_id ?? '') !== nexoExternalId) {
+      return 'shopify_update_task_factory_identity_mismatch';
+    }
   }
 
   const expectedIdempotencyKey = buildNexoShopifyTaskIdempotencyKey({
@@ -267,7 +281,10 @@ async function loadOrderLevelTaskContext(task, runtime) {
     ? await runtime.findFactoryUploadTaskByOrderPackageId(orderPackage.id)
     : null;
 
-  return { order, orderPackage, artifact, factoryUploadTask };
+  const lineItems = order && payloadObject(task)?.shipmentScope === 'position_aggregate'
+    ? await runtime.listOrderLineItemsByOrderId(order.id)
+    : null;
+  return { order, orderPackage, artifact, factoryUploadTask, lineItems };
 }
 
 function baseResult(task) {
