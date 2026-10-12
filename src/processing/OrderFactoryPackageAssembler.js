@@ -162,6 +162,7 @@ async function readRenderPosition({
 
   return {
     classification: LINE_ITEM_CLASSIFICATIONS.WALLPAPER,
+    orderLineItemId: lineItem.id,
     sourcePosition: Number(lineItem.source_position),
     shopifyLineItemId: String(lineItem.shopify_line_item_id),
     sku: String(lineItem.sku).trim(),
@@ -225,6 +226,7 @@ export async function inspectOrderFactoryReadiness({
 
       positions.push({
           classification: LINE_ITEM_CLASSIFICATIONS.ACCESSORY,
+          orderLineItemId: lineItem.id,
           sourcePosition: Number(lineItem.source_position),
           shopifyLineItemId: lineItemId,
           sku,

@@ -163,7 +163,15 @@ export function matchFactoryFinancialPositions(positions, financialData) {
   });
 }
 
-function buildPositionXml(position, index) {
+function positiveDecimalId(value, name) {
+  if ((typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) &&
+      (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0)) {
+    throw new Error(`${name} must be a positive decimal integer ID for NEXO XML`);
+  }
+  return String(value);
+}
+
+function buildPositionXml(position, index, reference) {
   const sku = normalizeText(position?.sku);
   if (!sku) {
     throw new Error(`Factory position ${index + 1} requires a non-empty SKU`);
@@ -180,6 +188,7 @@ function buildPositionXml(position, index) {
       throw new Error('Accessory positions must not contain panel files');
     }
     return `    <position>
+      <reference>${xmlEscape(reference)}</reference>
       <sku>${xmlEscape(sku)}</sku>
       <width unit="mm">0</width>
       <height unit="mm">0</height>
@@ -205,6 +214,7 @@ function buildPositionXml(position, index) {
     .join('\n');
 
   return `    <position>
+      <reference>${xmlEscape(reference)}</reference>
       <sku>${xmlEscape(sku)}</sku>
       <width unit="mm">${xmlEscape(formatMm(firstPanel.widthMm))}</width>
       <height unit="mm">${xmlEscape(formatMm(firstPanel.heightMm))}</height>
@@ -249,8 +259,18 @@ export function buildOrderXml({ order, shopifyOrderId, positions }) {
     error.code = 'factory_financial_order_identity_mismatch';
     throw error;
   }
+  const referenceOrderId = positiveDecimalId(shopifyOrderId, 'shopifyOrderId');
+  const references = new Set();
   const positionsXml = matchFactoryFinancialPositions(positions, financialData)
-    .map((position, index) => buildPositionXml(position, index))
+    .map((position, index) => {
+      const lineItemId = positiveDecimalId(position.orderLineItemId, 'orderLineItemId');
+      const reference = `WANDINI-S${referenceOrderId}-J${lineItemId}`;
+      if (references.has(reference)) {
+        throw new Error('Duplicate factory position reference for NEXO XML');
+      }
+      references.add(reference);
+      return buildPositionXml(position, index, reference);
+    })
     .join('\n');
 
   return `<?xml version="1.0" encoding="UTF-8"?>

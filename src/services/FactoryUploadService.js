@@ -174,10 +174,18 @@ export function extractPdfFileNamesFromXml(xml) {
   if (!positions.length || positionsBody.replace(positionPattern, '').trim() !== '' ||
       /<file\b/i.test(text.replace(containers[0][0], ''))) invalidPosition();
 
-  for (const [, body] of positions) {
+  const positionReferences = new Set();
+  for (const [, positionBody] of positions) {
+    let body = positionBody;
+    const reference = body.match(/^\s*<reference>(WANDINI-S[1-9]\d*-J[1-9]\d*)<\/reference>/);
+    if (reference) {
+      if (positionReferences.has(reference[1])) invalidPosition();
+      positionReferences.add(reference[1]);
+      body = body.slice(reference[0].length);
+    }
     // Preserve the original SKU-only format for historical artifacts.
     const legacy = body.match(/^\s*<sku>([^<]+)<\/sku>\s*$/);
-    if (legacy && decodeXmlText(legacy[1]).trim()) continue;
+    if (!reference && legacy && decodeXmlText(legacy[1]).trim()) continue;
 
     const structured = body.match(/^\s*<sku>([^<]+)<\/sku>\s*<width unit="mm">(\d+(?:\.\d+)?)<\/width>\s*<height unit="mm">(\d+(?:\.\d+)?)<\/height>\s*<variants>([1-9]\d*)<\/variants>\s*<copies_per_variant>([1-9]\d*)<\/copies_per_variant>\s*(?:<total_price>(\d+\.\d{2})<\/total_price>\s*)?(<files\/>|<files>[\s\S]*?<\/files>)\s*$/);
     if (!structured || !decodeXmlText(structured[1]).trim()) invalidPosition();
@@ -195,6 +203,8 @@ export function extractPdfFileNamesFromXml(xml) {
     if (fileBody === undefined || [...fileBody.matchAll(referencePattern)].length !== Number(variants) ||
         fileBody.replace(referencePattern, '').trim() !== '') invalidPosition();
   }
+
+  if (positionReferences.size !== 0 && positionReferences.size !== positions.length) invalidPosition();
 
   const fileNames = [];
   const seen = new Set();

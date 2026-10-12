@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -19,7 +18,7 @@ import { ensureOrderFactoryPackage } from '../src/services/OrderFactoryPackageSe
 import { ensureOrderFactoryUploadTask } from '../src/services/FactoryUploadTaskService.js';
 
 const tempRoot = await fs.mkdtemp(
-  path.join(os.tmpdir(), 'orchestrator-order-factory-')
+  path.resolve('.orchestrator-order-factory-')
 );
 const artifactsRoot = path.join(tempRoot, 'artifacts');
 await fs.mkdir(artifactsRoot, { recursive: true });
@@ -56,7 +55,7 @@ function orderFixture(id, sourceItems) {
 
 function persistedLine(order, source, sourcePosition, classification = 'WALLPAPER') {
   return {
-    id: sourcePosition + 1,
+    id: 30 + sourcePosition * 12,
     order_id: order.id,
     shopify_order_id: order.shopify_order_id,
     shopify_line_item_id: String(source.id),
@@ -311,7 +310,8 @@ try {
       `<order_number>WANDINI-S${twoOrder.shopify_order_id}</order_number>`
     )
   );
-  assert.ok(!twoXml.includes('<reference>'));
+  assert.deepEqual([...twoXml.matchAll(/<reference>([^<]+)<\/reference>/g)].map(match => match[1]),
+    twoLines.map(line => `WANDINI-S${twoOrder.shopify_order_id}-J${line.id}`));
   assert.ok(!twoXml.includes('<delivery_note>'));
   assert.ok(twoXml.includes('<shipping_type>Standard</shipping_type>'));
   assert.ok(twoXml.includes('<company>Wandini</company>'));
@@ -471,6 +471,7 @@ try {
     assert.equal(ready.ready, true, ready.reason);
     assert.equal(input.jobs.length, fixture.wallpaper.length);
     assert.equal(ready.positions.length, fixture.positions);
+    assert.deepEqual(ready.positions.map(position => position.orderLineItemId), lines.map(line => line.id));
     assert.deepEqual(ready.positions.map((position) => position.sku),
       lines.map((line) => line.sku));
     for (const position of ready.positions.filter((p) => p.classification === 'ACCESSORY')) {
@@ -485,13 +486,16 @@ try {
     const xml = await fs.readFile(assembly.xmlPath, 'utf8');
     const xmlPositions = [...xml.matchAll(/<position>([\s\S]*?)<\/position>/g)];
     assert.equal(xmlPositions.length, fixture.positions);
+    assert.deepEqual([...xml.matchAll(/<reference>([^<]+)<\/reference>/g)].map(match => match[1]),
+      lines.map(line => `WANDINI-S${order.shopify_order_id}-J${line.id}`));
     assert.equal(assembly.fileCount, fixture.pdfs + 1);
     assert.equal(assembly.manifest.contents.position_count, fixture.positions);
     assert.equal(assembly.manifest.contents.pdf_count, fixture.pdfs);
     assert.equal(xmlReferences(xml).length, fixture.pdfs);
     for (const [index, position] of ready.positions.entries()) {
       if (position.classification === 'ACCESSORY') {
-        assert.equal(xmlPositions[index][1].trim(), `<sku>${position.sku}</sku>
+        assert.equal(xmlPositions[index][1].trim(), `<reference>WANDINI-S${order.shopify_order_id}-J${lines[index].id}</reference>
+      <sku>${position.sku}</sku>
       <width unit="mm">0</width>
       <height unit="mm">0</height>
       <variants>1</variants>
@@ -828,5 +832,7 @@ try {
 
   console.log('order-level factory package safety smoke ok');
 } finally {
+  assert.equal(path.dirname(path.resolve(tempRoot)), process.cwd());
+  assert.ok(path.basename(tempRoot).startsWith('.orchestrator-order-factory-'));
   await fs.rm(tempRoot, { recursive: true, force: true });
 }

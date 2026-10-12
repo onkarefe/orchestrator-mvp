@@ -32,6 +32,7 @@ function fixture(items, total, shopifyId = String(++sequence)) {
     },
   };
   const positions = items.map((item, index) => ({
+    orderLineItemId: index + 1,
     classification: item.sku.startsWith('283-') ? 'ACCESSORY' : 'WALLPAPER',
     shopifyLineItemId: String(item.id), sourcePosition: index, sku: item.sku, quantity: item.quantity,
     panelFiles: item.sku.startsWith('283-') ? [] : Array.from({ length: 4 }, (_, panel) => ({
@@ -114,7 +115,8 @@ try {
     assert.match(xml, /<shipping_type>Standard<\/shipping_type>\s*<shipping_costs>0.00<\/shipping_costs>\s*<payment_method>Shopify Payments<\/payment_method>/);
     assert.ok(!/<price\b/.test(xml));
     assert.match(xml, new RegExp(`<order_number>WANDINI-S${id}</order_number>`));
-    assert.ok(!xml.includes('<reference>'));
+    assert.deepEqual([...xml.matchAll(/<reference>([^<]+)<\/reference>/g)].map(match => match[1]),
+      original.positions.map(position => `WANDINI-S${id}-J${position.orderLineItemId}`));
     for (const [index, body] of bodies(xml).entries()) {
       assert.match(body, /<copies_per_variant>1<\/copies_per_variant>\s*<total_price>\d+\.\d{2}<\/total_price>\s*<files/);
       if (index < totals.length - 1) {
@@ -131,7 +133,8 @@ try {
     const xml = await fs.readFile(a.xmlPath, 'utf8');
     const total = ['0.00', '32.46', '64.92', '97.38'][quantity];
     assert.equal(bodies(xml).length, 1);
-    assert.equal(bodies(xml)[0].trim(), `<sku>283-388.0</sku>
+    assert.equal(bodies(xml)[0].trim(), `<reference>WANDINI-S${f.order.shopify_order_id}-J${f.lineItems[0].id}</reference>
+      <sku>283-388.0</sku>
       <width unit="mm">0</width>
       <height unit="mm">0</height>
       <variants>1</variants>
@@ -238,6 +241,30 @@ try {
   const validAccessory = bodies(xmlFor(accessoryFixture(2)))[0];
   const wallpaperFixture = fixture([source('101', '20-140.1-3', '100.00')], '100.00');
   const validWallpaper = bodies(xmlFor(wallpaperFixture))[0];
+  const referenceTag = validAccessory.match(/<reference>[^<]+<\/reference>/)[0];
+  const unreferencedAccessory = validAccessory.replace(referenceTag, '');
+  for (const [name, invalid] of [
+    ['empty reference', validAccessory.replace(referenceTag, '<reference></reference>')],
+    ['whitespace reference', validAccessory.replace(referenceTag, '<reference> </reference>')],
+    ['invalid reference', validAccessory.replace(referenceTag, '<reference>WANDINI-S123-J1.5</reference>')],
+    ['zero order ID', validAccessory.replace(referenceTag, '<reference>WANDINI-S0-J1</reference>')],
+    ['zero line ID', validAccessory.replace(referenceTag, '<reference>WANDINI-S123-J0</reference>')],
+    ['self-closing reference', validAccessory.replace(referenceTag, '<reference/>')],
+    ['repeated reference element', validAccessory.replace(referenceTag, referenceTag + referenceTag)],
+    ['reference after SKU', unreferencedAccessory.replace('</sku>', `</sku>${referenceTag}`)],
+  ]) await test(`FTP rejects ${name}`, () => {
+    assert.throws(() => extractPdfFileNamesFromXml(`<positions><position>${invalid}</position></positions>`), { code: 'xml_pdf_references_missing' });
+  });
+  await test('FTP rejects duplicate references and mixed referenced/unreferenced positions', () => {
+    for (const pair of [
+      [validAccessory, validAccessory],
+      [validAccessory, unreferencedAccessory],
+      [unreferencedAccessory, validAccessory],
+    ]) {
+      assert.throws(() => extractPdfFileNamesFromXml(`<positions>${pair.map(body => `<position>${body}</position>`).join('')}</positions>`), { code: 'xml_pdf_references_missing' });
+    }
+    assert.deepEqual(extractPdfFileNamesFromXml(`<positions><position>${unreferencedAccessory}</position></positions>`), []);
+  });
   for (const [name, invalid] of [
     ['zero quantity', validAccessory.replace('<copies_per_variant>2', '<copies_per_variant>0')],
     ['fractional quantity', validAccessory.replace('<copies_per_variant>2', '<copies_per_variant>1.5')],
@@ -254,13 +281,14 @@ try {
     ['partial wallpaper PDFs', validWallpaper.replace(/<file type="ftp">[^<]+<\/file>/, '')],
     ['wrong file type', validWallpaper.replace('type="ftp"', 'type="http"')],
   ]) await test(`FTP rejects ${name}, alone and within mixed positions`, () => {
-    for (const body of [`<position>${invalid}</position>`, `<position>${validWallpaper}</position><position>${invalid}</position>`]) {
+    const distinctInvalid = invalid.replace(/-J1<\/reference>/, '-J999</reference>');
+    for (const body of [`<position>${invalid}</position>`, `<position>${validWallpaper}</position><position>${distinctInvalid}</position>`]) {
       assert.throws(() => extractPdfFileNamesFromXml(`<positions>${body}</positions>`), { code: 'xml_pdf_references_missing' });
     }
   });
   await test('FTP preserves legacy accessories and wallpaper without financial fields', () => {
     assert.deepEqual(extractPdfFileNamesFromXml('<positions><position><sku>283-388.0</sku></position></positions>'), []);
-    const legacy = validWallpaper.replace(/\s*<total_price>.*?<\/total_price>/, '');
+    const legacy = validWallpaper.replace(/\s*<reference>.*?<\/reference>/, '').replace(/\s*<total_price>.*?<\/total_price>/, '');
     assert.deepEqual(extractPdfFileNamesFromXml(`<positions><position>${legacy}</position><position><sku>283-388.0</sku></position></positions>`), wallpaperFixture.positions[0].panelFiles.map(p => p.fileName));
   });
   await test('FTP keeps duplicate PDF and unsafe filename rejection', () => {

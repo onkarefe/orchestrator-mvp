@@ -84,7 +84,7 @@ function assertPanelCase({
     positions: [
       {
         sku: 'wandini-prod1-b',
-        classification: 'WALLPAPER', shopifyLineItemId: '111', sourcePosition: 0,
+        classification: 'WALLPAPER', shopifyLineItemId: '111', sourcePosition: 0, orderLineItemId: 30,
         quantity: 1,
         panelFiles,
       },
@@ -99,7 +99,8 @@ function assertPanelCase({
   assert.ok(
     xml.includes(`<order_number>${orderNumber}</order_number>`)
   );
-  assert.ok(!xml.includes('<reference>'));
+  assert.match(xml, /<position>\s*<reference>WANDINI-S7217548394776-J30<\/reference>\s*<sku>/);
+  assert.equal((xml.match(/<reference>/g) ?? []).length, 1);
   assert.ok(xml.includes('<shipping_type>Standard</shipping_type>'));
   assert.match(xml, /<phone>123456<\/phone>\s*<email>test.user@example.com<\/email>\s*<\/shipping_to>/);
   assert.match(xml, /<shipping_type>Standard<\/shipping_type>\s*<shipping_costs>0.00<\/shipping_costs>\s*<payment_method>Shopify Payments<\/payment_method>/);
@@ -223,6 +224,7 @@ const mixedOrderXml = buildOrderXml({
   positions: mixedOrderPlans.map(({ lineItem, plan }, sourcePosition) => ({
     sku: lineItem.sku,
     classification: 'WALLPAPER', shopifyLineItemId: String(111 + sourcePosition), sourcePosition,
+    orderLineItemId: [30, 42][sourcePosition],
     quantity: 1,
     panelFiles: buildPanelFiles({
       shopifyOrderId: '7217548394776',
@@ -235,6 +237,9 @@ const mixedOrderXml = buildOrderXml({
 });
 assert.equal((mixedOrderXml.match(/<order>/g) ?? []).length, 1);
 assert.equal((mixedOrderXml.match(/<position>/g) ?? []).length, 2);
+assert.deepEqual([...mixedOrderXml.matchAll(/<reference>([^<]+)<\/reference>/g)].map(match => match[1]), [
+  'WANDINI-S7217548394776-J30', 'WANDINI-S7217548394776-J42',
+]);
 assert.equal(
   (mixedOrderXml.match(/<file type=\x22ftp\x22>/g) ?? []).length,
   6
@@ -296,7 +301,7 @@ const quantityOneXml = buildOrderXml({
   positions: [
     {
       sku: 'wandini-prod1-b',
-      classification: 'WALLPAPER', shopifyLineItemId: '111', sourcePosition: 0,
+      classification: 'WALLPAPER', shopifyLineItemId: '111', sourcePosition: 0, orderLineItemId: 30,
       quantity: 1,
       panelFiles: buildPanelFiles({
         shopifyOrderId: '7217548394776',
@@ -313,7 +318,7 @@ assert.throws(() => buildOrderXml({
   positions: [
     {
       sku: 'wandini-prod1-b',
-      classification: 'WALLPAPER', shopifyLineItemId: '111', sourcePosition: 0,
+      classification: 'WALLPAPER', shopifyLineItemId: '111', sourcePosition: 0, orderLineItemId: 30,
       quantity: 99,
       panelFiles: buildPanelFiles({
         shopifyOrderId: '7217548394776',
@@ -326,7 +331,7 @@ assert.throws(() => buildOrderXml({
 }), /factory_financial_position_mismatch/);
 assert.match(quantityOneXml, /<order_number>WANDINI-S7217548394776<\/order_number>/);
 
-const addon = { classification: 'ACCESSORY', shopifyLineItemId: '111', sourcePosition: 0, sku: '283-391.0', quantity: 3, panelFiles: [] };
+const addon = { classification: 'ACCESSORY', shopifyLineItemId: '111', sourcePosition: 0, orderLineItemId: '42', sku: '283-391.0', quantity: 3, panelFiles: [] };
 const addonOrder = { raw_payload_json: {
   ...JSON.parse(order.raw_payload_json),
   ...financialFields([{ id: 111, sku: addon.sku, quantity: 3, price: '32.46' }], '97.38'),
@@ -359,6 +364,21 @@ for (const email of [undefined, null, '', ' ', 123, {}, 'invalid', 'a@@example.c
   }), /Valid customer email is required for NEXO XML/);
 }
 assert.equal((accessoryXml.match(/<position>/g) ?? []).length, 1);
+assert.match(accessoryXml, /<position>\s*<reference>WANDINI-S7217548394776-J42<\/reference>\s*<sku>/);
+for (const orderLineItemId of [undefined, null, '', ' ', 0, -1, 1.5, NaN, Infinity,
+  Number.MAX_SAFE_INTEGER + 1, '0', '-1', '1.5', '1e2', '01', ' 42', '42 ', '42\n', true, {}]) {
+  assert.throws(() => buildOrderXml({
+    order: addonOrder, shopifyOrderId: '7217548394776', positions: [{ ...addon, orderLineItemId }],
+  }), /orderLineItemId must be a positive decimal integer ID/);
+}
+assert.throws(() => buildOrderXml({
+  order: { raw_payload_json: {
+    ...addonOrder.raw_payload_json,
+    ...financialFields([{ id: 111, sku: addon.sku, quantity: 3 }, { id: 112, sku: addon.sku, quantity: 3 }], '600.00'),
+  } },
+  shopifyOrderId: '7217548394776',
+  positions: [addon, { ...addon, shopifyLineItemId: '112', sourcePosition: 1, orderLineItemId: 42 }],
+}), /Duplicate factory position reference/);
 assert.match(accessoryXml, /<sku>283-391.0<\/sku>\s*<width unit="mm">0<\/width>\s*<height unit="mm">0<\/height>\s*<variants>1<\/variants>\s*<copies_per_variant>3<\/copies_per_variant>\s*<total_price>97.38<\/total_price>\s*<files\/>/);
 assert.throws(() => buildOrderXml({
   order, shopifyOrderId: '7217548394776', positions: [],
@@ -384,7 +404,7 @@ assert.throws(() => buildOrderXml({
 }), /must not contain panel files/);
 assert.throws(() => buildOrderXml({
   order, shopifyOrderId: '7217548394776', positions: [{
-    sku: 'wandini-prod1-b', classification: 'WALLPAPER', shopifyLineItemId: '111', sourcePosition: 0, quantity: 1,
+    sku: 'wandini-prod1-b', classification: 'WALLPAPER', shopifyLineItemId: '111', sourcePosition: 0, orderLineItemId: 30, quantity: 1,
   }],
 }), /Generated panel PDFs are required/);
 console.log('xml smoke ok:', cases);
